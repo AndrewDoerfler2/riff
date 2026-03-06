@@ -250,6 +250,15 @@ describe('Transport: extended actions', () => {
     expect(toggled.snapEnabled).toBe(!base.snapEnabled);
   });
 
+  it('SET_PRE_ROLL_BARS clamps to supported range', () => {
+    const low = dawReducer(makeState(), { type: 'SET_PRE_ROLL_BARS', payload: -3 });
+    const high = dawReducer(makeState(), { type: 'SET_PRE_ROLL_BARS', payload: 12 });
+    const mid = dawReducer(makeState(), { type: 'SET_PRE_ROLL_BARS', payload: 2 });
+    expect(low.preRollBars).toBe(0);
+    expect(high.preRollBars).toBe(4);
+    expect(mid.preRollBars).toBe(2);
+  });
+
   it('SET_ZOOM clamps below 20 and above 600', () => {
     const lo = dawReducer(makeState(), { type: 'SET_ZOOM', payload: 1 });
     const hi = dawReducer(makeState(), { type: 'SET_ZOOM', payload: 9999 });

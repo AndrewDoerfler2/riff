@@ -1,66 +1,26 @@
 import { createServer } from 'node:http';
 import { URL } from 'node:url';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { callMcpTool } from './mcpClient.js';
 
 loadDotEnv();
 
 const PORT = Number.parseInt(process.env.PORT ?? '8787', 10);
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const OPENAI_MODEL = process.env.OPENAI_MODEL ?? 'gpt-4.1-mini';
-const OPENAI_TIMEOUT_MS = Number.parseInt(process.env.OPENAI_TIMEOUT_MS ?? '180000', 10);
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-6';
+const ANTHROPIC_TIMEOUT_MS = Number.parseInt(process.env.ANTHROPIC_TIMEOUT_MS ?? '180000', 10);
+const MCP_TIMEOUT_MS = Number.parseInt(process.env.MCP_TIMEOUT_MS ?? String(ANTHROPIC_TIMEOUT_MS), 10);
 const REQUEST_BODY_LIMIT_BYTES = 1_000_000;
 const CACHE_TTL_MS = Number.parseInt(process.env.AI_CACHE_TTL_MS ?? '300000', 10);
 const CACHE_MAX_ENTRIES = Number.parseInt(process.env.AI_CACHE_MAX_ENTRIES ?? '100', 10);
+const DEFAULT_MCP_SERVER_PATH = resolve(process.cwd(), '..', '..', 'MCP', 'dist', 'index.js');
+const MCP_SERVER_PATH = process.env.MCP_SERVER_PATH ?? DEFAULT_MCP_SERVER_PATH;
+const MCP_SERVER_COMMAND = process.env.MCP_SERVER_COMMAND ?? 'node';
+const MCP_AUDIO_TOOL = process.env.MCP_AUDIO_TOOL ?? 'audio_producer';
+const AI_PROVIDER = process.env.AI_PROVIDER ?? 'auto';
 
 const SYSTEM_PROMPT = 'You create backing-track arrangements as strict JSON. Return only valid JSON. No markdown fences. Follow the requested schema exactly.';
-const ARRANGEMENT_JSON_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['title', 'instrumentPlans'],
-  properties: {
-    title: { type: 'string', minLength: 1 },
-    instrumentPlans: {
-      type: 'array',
-      minItems: 1,
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['instrument'],
-        properties: {
-          instrument: { type: 'string' },
-          notes: {
-            type: 'array',
-            items: {
-              type: 'object',
-              additionalProperties: false,
-              required: ['midi', 'startBeats', 'durationBeats', 'velocity'],
-              properties: {
-                midi: { type: 'number' },
-                startBeats: { type: 'number' },
-                durationBeats: { type: 'number' },
-                velocity: { type: 'number' },
-              },
-            },
-          },
-          drumHits: {
-            type: 'array',
-            items: {
-              type: 'object',
-              additionalProperties: false,
-              required: ['kind', 'startBeats', 'velocity'],
-              properties: {
-                kind: { type: 'string', enum: ['kick', 'snare', 'hat', 'openHat'] },
-                startBeats: { type: 'number' },
-                velocity: { type: 'number' },
-              },
-            },
-          },
-        },
-      },
-    },
-  },
-};
 const ALLOWED_TIME_SIGNATURES = new Set(['4/4', '3/4', '6/8', '5/4', '7/8']);
 const ALLOWED_GENRES = new Set([
   'jazz', 'blues', 'rock', 'pop', 'hip-hop',
@@ -90,7 +50,10 @@ createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/api/health') {
     writeJson(res, 200, {
       ok: true,
-      openAiConfigured: Boolean(OPENAI_API_KEY),
+      aiProvider: getActiveAiProvider(),
+      anthropicConfigured: Boolean(ANTHROPIC_API_KEY),
+      mcpConfigured: isMcpAvailable(),
+      mcpServerPath: isMcpAvailable() ? MCP_SERVER_PATH : null,
       cacheEntries: arrangementCache.size,
       inflightRequests: inFlightRequests.size,
     });
@@ -98,9 +61,9 @@ createServer(async (req, res) => {
   }
 
   if (req.method === 'POST' && url.pathname === '/api/ai/backing-track') {
-    if (!OPENAI_API_KEY) {
+    if (!isAnyAiProviderAvailable()) {
       writeJson(res, 500, {
-        error: 'OPENAI_API_KEY is not set. Add it to your backend environment before using AI backing track generation.',
+        error: 'No AI provider is configured. Set ANTHROPIC_API_KEY or configure the local MCP server before using AI backing track generation.',
       });
       return;
     }
@@ -143,64 +106,77 @@ createServer(async (req, res) => {
 });
 
 async function requestArrangement(config) {
-  const prompt = buildPrompt(config);
-  let payload;
-
-  try {
-    payload = await requestOpenAiResponse(prompt, { structuredOutput: true });
-  } catch (error) {
-    if (!isStructuredOutputCompatibilityError(error)) {
+  if (shouldUseMcp()) {
+    try {
+      return await requestArrangementViaMcp(config);
+    } catch (error) {
+      if (Boolean(ANTHROPIC_API_KEY) && AI_PROVIDER === 'auto') {
+        console.warn('MCP arrangement request failed, falling back to direct Anthropic:', error);
+        return requestArrangementViaAnthropic(config);
+      }
       throw error;
     }
-    payload = await requestOpenAiResponse(prompt, { structuredOutput: false });
   }
+  return requestArrangementViaAnthropic(config);
+}
 
-  const text = extractOutputText(payload);
-  const parsed = safeJsonParse(text);
+async function requestArrangementViaMcp(config) {
+  const prompt = [
+    SYSTEM_PROMPT,
+    '',
+    'CRITICAL:',
+    '- Return only valid JSON.',
+    '- Do not include explanations, markdown, commentary, or code fences.',
+    '- The response will be parsed automatically and rejected if it is not strict JSON.',
+    '',
+    buildPrompt(config),
+  ].join('\n');
+
+  const text = await callMcpTool({
+    command: MCP_SERVER_COMMAND,
+    args: [MCP_SERVER_PATH],
+    env: process.env,
+    toolName: MCP_AUDIO_TOOL,
+    toolArguments: { message: prompt },
+    timeoutMs: MCP_TIMEOUT_MS,
+  });
+
+  let parsed;
+  try {
+    parsed = safeJsonParse(text);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`MCP tool "${MCP_AUDIO_TOOL}" returned non-JSON arrangement output. ${message}`);
+  }
   validateArrangement(parsed, config.instruments);
   return parsed;
 }
 
-async function requestOpenAiResponse(prompt, { structuredOutput }) {
+async function requestArrangementViaAnthropic(config) {
+  const prompt = buildPrompt(config);
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), OPENAI_TIMEOUT_MS);
+  const timeoutId = setTimeout(() => controller.abort(), ANTHROPIC_TIMEOUT_MS);
   let response;
 
   try {
-    response = await fetch('https://api.openai.com/v1/responses', {
+    response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${OPENAI_API_KEY}`,
-        'Content-Type': 'application/json',
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: OPENAI_MODEL,
-        input: [
-          {
-            role: 'system',
-            content: [{ type: 'input_text', text: SYSTEM_PROMPT }],
-          },
-          {
-            role: 'user',
-            content: [{ type: 'input_text', text: prompt }],
-          },
-        ],
-        ...(structuredOutput ? {
-          text: {
-            format: {
-              type: 'json_schema',
-              name: 'backing_track_arrangement',
-              schema: ARRANGEMENT_JSON_SCHEMA,
-              strict: true,
-            },
-          },
-        } : {}),
+        model: ANTHROPIC_MODEL,
+        max_tokens: 8096,
+        system: SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: prompt }],
       }),
       signal: controller.signal,
     });
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error(`OpenAI request timed out after ${OPENAI_TIMEOUT_MS}ms.`);
+      throw new Error(`Anthropic request timed out after ${ANTHROPIC_TIMEOUT_MS}ms.`);
     }
     throw error;
   } finally {
@@ -209,11 +185,36 @@ async function requestOpenAiResponse(prompt, { structuredOutput }) {
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`OpenAI API error (${response.status}): ${errorText}`);
+    throw new Error(`Anthropic API error (${response.status}): ${errorText}`);
   }
 
   const payload = await response.json();
-  return payload;
+  const text = payload.content?.find(b => b.type === 'text')?.text ?? '';
+  if (!text) throw new Error('Anthropic response did not include output text.');
+
+  const parsed = safeJsonParse(text);
+  validateArrangement(parsed, config.instruments);
+  return parsed;
+}
+
+function isMcpAvailable() {
+  if (process.env.MCP_SERVER_ENABLED === 'false') return false;
+  return existsSync(MCP_SERVER_PATH);
+}
+
+function getActiveAiProvider() {
+  if (AI_PROVIDER === 'mcp') return 'mcp';
+  if (AI_PROVIDER === 'anthropic') return 'anthropic';
+  if (isMcpAvailable()) return 'mcp';
+  return 'anthropic';
+}
+
+function shouldUseMcp() {
+  return getActiveAiProvider() === 'mcp' && isMcpAvailable();
+}
+
+function isAnyAiProviderAvailable() {
+  return shouldUseMcp() || Boolean(ANTHROPIC_API_KEY);
 }
 
 function buildPrompt(config) {
@@ -393,53 +394,6 @@ function setCachedArrangement(cacheKey, value) {
   }
 }
 
-function extractOutputText(payload) {
-  if (typeof payload?.output_text === 'string' && payload.output_text.trim()) {
-    return payload.output_text.trim();
-  }
-
-  if (Array.isArray(payload?.output_text)) {
-    const arrayText = payload.output_text
-      .map(item => (typeof item === 'string' ? item : item?.text ?? ''))
-      .join('\n')
-      .trim();
-    if (arrayText) return arrayText;
-  }
-
-  if (Array.isArray(payload?.output)) {
-    const textFromMessages = payload.output
-      .flatMap(item => item?.content ?? [])
-      .flatMap(content => {
-        if (typeof content?.text === 'string') return [content.text];
-        if (Array.isArray(content?.text)) {
-          return content.text
-            .map(part => (typeof part === 'string' ? part : part?.text ?? ''))
-            .filter(Boolean);
-        }
-        return [];
-      })
-      .join('\n')
-      .trim();
-    if (textFromMessages) return textFromMessages;
-  }
-
-  if (typeof payload.output_text === 'string' && payload.output_text.trim()) {
-    return payload.output_text.trim();
-  }
-
-  const text = (payload.output ?? [])
-    .flatMap(item => item.content ?? [])
-    .filter(content => content.type === 'output_text' || content.type === 'text')
-    .map(content => content.text ?? '')
-    .join('\n')
-    .trim();
-
-  if (!text) {
-    throw new Error('OpenAI response did not include output text.');
-  }
-
-  return text;
-}
 
 function safeJsonParse(text) {
   const cleaned = text
@@ -456,15 +410,6 @@ function safeJsonParse(text) {
   }
 }
 
-function isStructuredOutputCompatibilityError(error) {
-  const message = error instanceof Error ? error.message : '';
-  return (
-    message.includes('json_schema')
-    || message.includes('text.format')
-    || message.includes('response_format')
-    || message.includes('Unsupported parameter')
-  );
-}
 
 function validateArrangement(arrangement, requestedInstruments) {
   if (!arrangement || !Array.isArray(arrangement.instrumentPlans)) {
@@ -511,7 +456,8 @@ function getStatusCodeForError(error) {
     return 400;
   }
   if (message.includes('timed out')) return 504;
-  if (message.includes('OpenAI API error')) return 502;
+  if (message.includes('MCP')) return 502;
+  if (message.includes('Anthropic API error')) return 502;
   return 500;
 }
 

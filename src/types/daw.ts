@@ -170,6 +170,7 @@ export interface DAWState {
   loopEnd: number;
   metronomeEnabled: boolean;
   snapEnabled: boolean;
+  preRollBars: number;
 
   // Tracks
   tracks: Track[];
@@ -207,6 +208,7 @@ export type DAWAction =
   | { type: 'SET_LOOP_RANGE'; payload: { start: number; end: number } }
   | { type: 'TOGGLE_METRONOME' }
   | { type: 'TOGGLE_SNAP' }
+  | { type: 'SET_PRE_ROLL_BARS'; payload: number }
   | { type: 'TOGGLE_AUTO_SCROLL' }
   | { type: 'ADD_TRACK'; payload: TrackType }
   | { type: 'ADD_TRACK_WITH_DATA'; payload: Track }

@@ -40,6 +40,7 @@ function makeState(): DAWState {
     ...initialDAWState,
     projectName: 'Persistence Roundtrip',
     bpm: 126,
+    preRollBars: 2,
     tracks: [
       {
         ...track,
@@ -108,6 +109,7 @@ describe('projectPersistence', () => {
 
     expect(loaded.projectName).toBe('Persistence Roundtrip');
     expect(loaded.bpm).toBe(126);
+    expect(loaded.preRollBars).toBe(2);
     expect(loaded.tracks).toHaveLength(1);
     const clip = loaded.tracks?.[0].clips[0];
     expect(clip?.midiNotes).toHaveLength(2);

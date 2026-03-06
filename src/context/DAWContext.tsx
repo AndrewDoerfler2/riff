@@ -83,6 +83,10 @@ interface AudioEngineReturn {
   analyserRef: React.RefObject<AnalyserNode | null>;
   // analyserNode: React state — triggers re-render when mic connects/disconnects
   analyserNode: AnalyserNode | null;
+  startInputMeter: () => Promise<void>;
+  stopInputMeter: () => void;
+  getInputLevel: () => number;
+  isInputMeterActive: () => boolean;
   // Meter level reads (call from rAF loop)
   getTrackLevel: (trackId: string, mode: 'pre' | 'post') => [number, number];
   getMasterLevel: () => [number, number];
@@ -102,6 +106,9 @@ export function useAudioEngine(): AudioEngineReturn {
   const startTimeRef = useRef<number>(0);
   const projectStartRef = useRef<number>(0);
   const analyserRef = useRef<AnalyserNode | null>(null);
+  const micSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const inputMeterEnabledRef = useRef(false);
+  const streamDeviceIdRef = useRef('default');
   const [isEngineReady, setIsEngineReady] = React.useState(false);
   const [analyserNode, setAnalyserNode] = React.useState<AnalyserNode | null>(null);
   const [availableInputs, setAvailableInputs] = React.useState<MediaDeviceInfo[]>([]);
@@ -155,6 +162,85 @@ export function useAudioEngine(): AudioEngineReturn {
     }
     return audioCtxRef.current;
   }, []);
+
+  const clearInputGraph = useCallback(() => {
+    if (micSourceRef.current) {
+      try { micSourceRef.current.disconnect(); } catch {}
+      micSourceRef.current = null;
+    }
+    analyserRef.current = null;
+    setAnalyserNode(null);
+  }, []);
+
+  const closeInputStream = useCallback(() => {
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    streamRef.current = null;
+    streamDeviceIdRef.current = 'default';
+  }, []);
+
+  const requestedInputId = useCallback(
+    () => (selectedInputId && selectedInputId !== 'default' ? selectedInputId : 'default'),
+    [selectedInputId],
+  );
+
+  const attachAnalyserToStream = useCallback((ctx: AudioContext, stream: MediaStream) => {
+    clearInputGraph();
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 2048;
+    analyser.smoothingTimeConstant = 0.3;
+    const micSource = ctx.createMediaStreamSource(stream);
+    micSource.connect(analyser);
+    micSourceRef.current = micSource;
+    analyserRef.current = analyser;
+    setAnalyserNode(analyser);
+  }, [clearInputGraph]);
+
+  const ensureInputStream = useCallback(async (forceReopen = false): Promise<MediaStream> => {
+    const wantedDeviceId = requestedInputId();
+    const shouldReopen = forceReopen
+      || !streamRef.current
+      || streamDeviceIdRef.current !== wantedDeviceId;
+
+    if (shouldReopen) {
+      if (recordingActiveRef.current && streamRef.current) {
+        return streamRef.current;
+      }
+      clearInputGraph();
+      closeInputStream();
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: wantedDeviceId !== 'default'
+          ? { deviceId: { exact: wantedDeviceId } }
+          : true,
+        video: false,
+      });
+      streamRef.current = stream;
+      streamDeviceIdRef.current = wantedDeviceId;
+      refreshInputs().catch(err => {
+        console.error('Failed to refresh audio inputs after stream start:', err);
+      });
+    }
+
+    const stream = streamRef.current;
+    if (!stream) throw new Error('Input stream unavailable');
+    const ctx = getCtx();
+    if (!analyserRef.current) {
+      attachAnalyserToStream(ctx, stream);
+    }
+    return stream;
+  }, [attachAnalyserToStream, clearInputGraph, closeInputStream, getCtx, refreshInputs, requestedInputId]);
+
+  const startInputMeter = useCallback(async () => {
+    inputMeterEnabledRef.current = true;
+    await ensureInputStream(true);
+  }, [ensureInputStream]);
+
+  const stopInputMeter = useCallback(() => {
+    inputMeterEnabledRef.current = false;
+    if (!recordingActiveRef.current) {
+      clearInputGraph();
+      closeInputStream();
+    }
+  }, [clearInputGraph, closeInputStream]);
 
   const stopPlayback = useCallback(() => {
     sourceNodesRef.current.forEach(({ source, cleanup }) => {
@@ -245,29 +331,8 @@ export function useAudioEngine(): AudioEngineReturn {
   const startRecording = useCallback(async (armedTrackIds: string[]) => {
     if (!armedTrackIds.length || recordingActiveRef.current) return;
     try {
-      const ctx = getCtx();
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: selectedInputId && selectedInputId !== 'default'
-          ? { deviceId: { exact: selectedInputId } }
-          : true,
-        video: false,
-      });
-      streamRef.current = stream;
+      const stream = await ensureInputStream(false);
       recordingActiveRef.current = true;
-
-      refreshInputs().catch(err => {
-        console.error('Failed to refresh audio inputs after stream start:', err);
-      });
-
-      // Set up AnalyserNode for live waveform visualization
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 2048;
-      analyser.smoothingTimeConstant = 0.3;
-      const micSource = ctx.createMediaStreamSource(stream);
-      micSource.connect(analyser);
-      // Note: don't connect analyser to destination to avoid feedback
-      analyserRef.current = analyser;
-      setAnalyserNode(analyser);  // triggers re-render so Timeline shows live waveform
 
       const chunks: Blob[] = [];
       chunksRef.current = new Map(armedTrackIds.map(id => [id, chunks]));
@@ -277,10 +342,14 @@ export function useAudioEngine(): AudioEngineReturn {
       recorderRef.current = recorder;
     } catch (err) {
       recordingActiveRef.current = false;
+      if (!inputMeterEnabledRef.current) {
+        clearInputGraph();
+        closeInputStream();
+      }
       console.error('Microphone access denied:', err);
       throw err;
     }
-  }, [getCtx, refreshInputs, selectedInputId]);
+  }, [clearInputGraph, closeInputStream, ensureInputStream]);
 
   const stopRecording = useCallback(async (): Promise<Map<string, AudioClip>> => {
     const result = new Map<string, AudioClip>();
@@ -315,17 +384,18 @@ export function useAudioEngine(): AudioEngineReturn {
             console.error('Failed to decode audio:', err);
           }
         }
-        streamRef.current?.getTracks().forEach(t => t.stop());
-        streamRef.current = null;
         recorderRef.current = null;
         recordingActiveRef.current = false;
-        analyserRef.current = null;
-        setAnalyserNode(null);  // triggers re-render so live waveform disappears
+        chunksRef.current.clear();
+        if (!inputMeterEnabledRef.current) {
+          clearInputGraph();
+          closeInputStream();
+        }
         resolve(result);
       };
       recorder.stop();
     });
-  }, [getCtx]);
+  }, [clearInputGraph, closeInputStream, getCtx]);
 
   const currentAudioTime = useCallback((): number => {
     if (!audioCtxRef.current) return 0;
@@ -364,6 +434,25 @@ export function useAudioEngine(): AudioEngineReturn {
 
   const isRecordingActive = useCallback(() => recordingActiveRef.current, []);
 
+  const getInputLevel = useCallback((): number => {
+    const analyser = analyserRef.current;
+    if (!analyser) return 0;
+    return getRmsLevel(analyser);
+  }, []);
+
+  const isInputMeterActive = useCallback(() => (
+    recordingActiveRef.current || inputMeterEnabledRef.current
+  ), []);
+
+  useEffect(() => () => {
+    stopPlayback();
+    if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+      try { recorderRef.current.stop(); } catch {}
+    }
+    clearInputGraph();
+    closeInputStream();
+  }, [clearInputGraph, closeInputStream, stopPlayback]);
+
   const getTrackLevel = useCallback((trackId: string, mode: 'pre' | 'post'): [number, number] => {
     const bus = trackBusMapRef.current.get(trackId);
     if (!bus) return [0, 0];
@@ -394,6 +483,10 @@ export function useAudioEngine(): AudioEngineReturn {
     isRecordingActive,
     analyserRef,
     analyserNode,
+    startInputMeter,
+    stopInputMeter,
+    getInputLevel,
+    isInputMeterActive,
     getTrackLevel,
     getMasterLevel,
   };

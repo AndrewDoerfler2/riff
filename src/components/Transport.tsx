@@ -17,6 +17,7 @@ import { useDAW, useAudioEngineCtx, formatTime, formatClock } from '../context/D
 import type { TimeSignature } from '../types/daw';
 
 const TIME_SIGNATURE_OPTIONS: TimeSignature[] = ['4/4', '3/4', '6/8', '5/4', '7/8'];
+const PRE_ROLL_BAR_OPTIONS = [0, 1, 2] as const;
 
 function parseTimeSignature(value: string): TimeSignature {
   return TIME_SIGNATURE_OPTIONS.find((candidate) => candidate === value) ?? '4/4';
@@ -31,6 +32,10 @@ export default function Transport() {
     stopRecording,
     startPlayback,
     stopPlayback,
+    startInputMeter,
+    stopInputMeter,
+    getInputLevel,
+    isInputMeterActive,
     currentAudioTime,
     availableInputs,
     selectedInputId,
@@ -39,14 +44,20 @@ export default function Transport() {
     isRecordingActive,
   } = useAudioEngineCtx();
   const { isPlaying, isRecording, currentTime, bpm, timeSignature, loopEnabled,
-          metronomeEnabled, snapEnabled, autoScroll, masterVolume, tracks } = state;
+          metronomeEnabled, snapEnabled, preRollBars, autoScroll, masterVolume, tracks } = state;
 
   const [editingBpm, setEditingBpm] = useState(false);
   const [bpmInput, setBpmInput] = useState(String(bpm));
   const animFrameRef = useRef<number | null>(null);
   const lastTimeRef = useRef<number>(currentTime);
   const metronomeRef = useRef<Tone.MembraneSynth | null>(null);
+  const countInSynthRef = useRef<Tone.Synth | null>(null);
+  const countInTimeoutsRef = useRef<number[]>([]);
+  const countInCancelledRef = useRef(false);
   const recordLatchRef = useRef(false);
+  const inputMeterFillRef = useRef<HTMLDivElement | null>(null);
+  const inputMeterPeakRef = useRef<HTMLDivElement | null>(null);
+  const [countInBeatsLeft, setCountInBeatsLeft] = useState<number | null>(null);
   // Keep a live ref to tracks so startPlayback always has the latest clips
   const tracksRef = useRef(tracks);
   useEffect(() => { tracksRef.current = tracks; }, [tracks]);
@@ -54,6 +65,64 @@ export default function Transport() {
   useEffect(() => {
     if (!isPlaying) lastTimeRef.current = currentTime;
   }, [currentTime, isPlaying]);
+
+  const clearCountIn = useCallback(() => {
+    countInCancelledRef.current = true;
+    countInTimeoutsRef.current.forEach(timeoutId => window.clearTimeout(timeoutId));
+    countInTimeoutsRef.current = [];
+    if (countInSynthRef.current) {
+      countInSynthRef.current.dispose();
+      countInSynthRef.current = null;
+    }
+    setCountInBeatsLeft(null);
+  }, []);
+
+  useEffect(() => {
+    if (isRecording && !isPlaying) {
+      startInputMeter().catch(err => {
+        console.error('Input meter start failed:', err);
+      });
+      return;
+    }
+    if (!isRecording && !isPlaying) {
+      stopInputMeter();
+    }
+  }, [isRecording, isPlaying, startInputMeter, stopInputMeter]);
+
+  useEffect(() => {
+    let raf: number | null = null;
+    let smooth = 0;
+    let peak = 0;
+
+    const tick = () => {
+      const level = getInputLevel();
+      const active = isInputMeterActive();
+      smooth = Math.max(level, smooth * 0.82);
+      peak = Math.max(smooth, peak * 0.96);
+
+      const pct = Math.max(0, Math.min(1, smooth)) * 100;
+      const peakPct = Math.max(0, Math.min(1, peak)) * 100;
+      const fill = inputMeterFillRef.current;
+      if (fill) {
+        fill.style.width = `${pct}%`;
+        fill.style.opacity = active ? '1' : '0.35';
+        fill.style.background = pct > 85 ? '#ff453a' : (pct > 62 ? '#ffd60a' : '#30d158');
+      }
+
+      const peakMark = inputMeterPeakRef.current;
+      if (peakMark) {
+        peakMark.style.left = `${peakPct}%`;
+        peakMark.style.opacity = active ? '0.95' : '0.25';
+      }
+
+      raf = requestAnimationFrame(tick);
+    };
+
+    raf = requestAnimationFrame(tick);
+    return () => {
+      if (raf !== null) cancelAnimationFrame(raf);
+    };
+  }, [getInputLevel, isInputMeterActive]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -71,7 +140,7 @@ export default function Transport() {
 
   // ── Tone.js Metronome ──────────────────────────────────────────────────────
   useEffect(() => {
-    if (isPlaying && metronomeEnabled) {
+    if (isPlaying && metronomeEnabled && countInBeatsLeft === null) {
       // Sync Tone Transport to our BPM
       Tone.getTransport().bpm.value = bpm;
 
@@ -120,15 +189,49 @@ export default function Transport() {
         metronomeRef.current = null;
       }
     }
-  }, [isPlaying, metronomeEnabled, bpm, timeSignature]);
+  }, [countInBeatsLeft, isPlaying, metronomeEnabled, bpm, timeSignature]);
 
   // ── Recording wiring ────────────────────────────────────────────────────────
   // Animate playhead – synced to the real AudioContext clock
   useEffect(() => {
     if (isPlaying) {
       const armedIds = tracksRef.current.filter(t => t.armed).map(t => t.id);
+      const beatsPerBar = Math.max(1, parseInt(timeSignature.split('/')[0] ?? '4', 10));
+      const preRollBeats = preRollBars > 0 ? preRollBars * beatsPerBar : 0;
 
       const run = async () => {
+        const startTransport = async () => {
+          if (recordLatchRef.current) {
+            if (armedIds.length === 0) {
+              dispatch({ type: 'SET_PLAYING', payload: false });
+              dispatch({ type: 'SET_RECORDING', payload: false });
+              alert('Arm at least one track before starting recording.');
+              return;
+            }
+
+            if (!isRecordingActive()) {
+              try {
+                await startRecording(armedIds);
+              } catch (err) {
+                console.error('Recording failed:', err);
+                dispatch({ type: 'SET_RECORDING', payload: false });
+                dispatch({ type: 'SET_PLAYING', payload: false });
+                return;
+              }
+            }
+          }
+
+          startPlayback(lastTimeRef.current, tracksRef.current);
+
+          const tick = () => {
+            const t = currentAudioTime();
+            dispatch({ type: 'SET_CURRENT_TIME', payload: t });
+            lastTimeRef.current = t;
+            animFrameRef.current = requestAnimationFrame(tick);
+          };
+          animFrameRef.current = requestAnimationFrame(tick);
+        };
+
         if (recordLatchRef.current) {
           if (armedIds.length === 0) {
             dispatch({ type: 'SET_PLAYING', payload: false });
@@ -136,28 +239,42 @@ export default function Transport() {
             alert('Arm at least one track before starting recording.');
             return;
           }
+          if (preRollBeats > 0) {
+            clearCountIn();
+            countInCancelledRef.current = false;
+            const synth = new Tone.Synth({
+              oscillator: { type: 'triangle' },
+              envelope: { attack: 0.001, decay: 0.06, sustain: 0, release: 0.03 },
+              volume: -8,
+            }).toDestination();
+            countInSynthRef.current = synth;
+            const msPerBeat = (60 / bpm) * 1000;
+            setCountInBeatsLeft(preRollBeats);
+            await Tone.start();
 
-          if (!isRecordingActive()) {
-            try {
-              await startRecording(armedIds);
-            } catch (err) {
-              console.error('Recording failed:', err);
-              dispatch({ type: 'SET_RECORDING', payload: false });
-              dispatch({ type: 'SET_PLAYING', payload: false });
+            await new Promise<void>((resolve) => {
+              for (let i = 0; i < preRollBeats; i += 1) {
+                const timeoutId = window.setTimeout(() => {
+                  if (countInCancelledRef.current) return;
+                  const isDownbeat = i % beatsPerBar === 0;
+                  synth.triggerAttackRelease(isDownbeat ? 'C6' : 'C5', '32n');
+                  setCountInBeatsLeft(preRollBeats - i - 1);
+                }, i * msPerBeat);
+                countInTimeoutsRef.current.push(timeoutId);
+              }
+
+              const completionId = window.setTimeout(() => resolve(), preRollBeats * msPerBeat);
+              countInTimeoutsRef.current.push(completionId);
+            });
+
+            if (countInCancelledRef.current) {
+              clearCountIn();
               return;
             }
           }
         }
-
-        startPlayback(lastTimeRef.current, tracksRef.current);
-
-        const tick = () => {
-          const t = currentAudioTime();
-          dispatch({ type: 'SET_CURRENT_TIME', payload: t });
-          lastTimeRef.current = t;
-          animFrameRef.current = requestAnimationFrame(tick);
-        };
-        animFrameRef.current = requestAnimationFrame(tick);
+        clearCountIn();
+        await startTransport();
       };
 
       run().catch(err => {
@@ -165,6 +282,7 @@ export default function Transport() {
         dispatch({ type: 'SET_PLAYING', payload: false });
       });
     } else {
+      clearCountIn();
       stopPlayback();
       if (animFrameRef.current !== null) cancelAnimationFrame(animFrameRef.current);
       lastTimeRef.current = currentTime;
@@ -180,6 +298,7 @@ export default function Transport() {
       }
     }
     return () => {
+      clearCountIn();
       if (animFrameRef.current !== null) cancelAnimationFrame(animFrameRef.current);
     };
   }, [isPlaying]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -228,6 +347,12 @@ export default function Transport() {
     setEditingBpm(false);
   }, [bpm, bpmInput, dispatch]);
 
+  const handleCyclePreRoll = useCallback(() => {
+    const currentIndex = PRE_ROLL_BAR_OPTIONS.indexOf(preRollBars as (typeof PRE_ROLL_BAR_OPTIONS)[number]);
+    const next = PRE_ROLL_BAR_OPTIONS[(currentIndex + 1) % PRE_ROLL_BAR_OPTIONS.length] ?? 0;
+    dispatch({ type: 'SET_PRE_ROLL_BARS', payload: next });
+  }, [dispatch, preRollBars]);
+
   const armedCount = tracks.filter(t => t.armed).length;
   const inputOptions = availableInputs.length > 0 ? availableInputs : [];
   const isRecordReady = isRecording && !isPlaying;
@@ -255,6 +380,9 @@ export default function Transport() {
           <ActionIcon variant={isRecording ? 'filled' : 'light'} color={isRecordReady || isRecording ? 'red' : 'gray'} size="xl" title={`Record Arm${armedCount > 0 ? ` (${armedCount} tracks armed)` : ' - arm tracks first'}`} onClick={handleRecord}>●</ActionIcon>
           <ActionIcon variant="light" color="gray" size="lg" title="Step Forward" onClick={() => dispatch({ type: 'SET_CURRENT_TIME', payload: currentTime + (60 / bpm) })}>▶▶</ActionIcon>
           {armedCount > 0 && <Badge color="red" variant="light">{armedCount} armed</Badge>}
+          {countInBeatsLeft !== null && countInBeatsLeft > 0 && (
+            <Badge color="yellow" variant="filled">Count-in {countInBeatsLeft}</Badge>
+          )}
         </Group>
 
         <Group gap="md" wrap="nowrap" style={{ flex: 1, justifyContent: 'center' }}>
@@ -308,6 +436,14 @@ export default function Transport() {
             styles={{ input: { minWidth: 180 } }}
           />
 
+          <Stack gap={2}>
+            <Text size="xs" c="dimmed">Input Lv</Text>
+            <Box className="input-meter-shell" aria-label="Input level meter">
+              <Box ref={inputMeterFillRef} className="input-meter-fill" />
+              <Box ref={inputMeterPeakRef} className="input-meter-peak" />
+            </Box>
+          </Stack>
+
           <ActionIcon variant="light" color="gray" size="lg" title="Refresh audio devices" onClick={() => { refreshInputs().catch(err => console.error('Failed to refresh audio devices:', err)); }}>↻</ActionIcon>
 
           <NativeSelect
@@ -322,6 +458,15 @@ export default function Transport() {
         <Group gap="md" wrap="nowrap">
           <Button size="xs" variant={loopEnabled ? 'filled' : 'light'} color={loopEnabled ? 'blue' : 'gray'} onClick={() => dispatch({ type: 'TOGGLE_LOOP' })}>Loop</Button>
           <Button size="xs" variant={metronomeEnabled ? 'filled' : 'light'} color={metronomeEnabled ? 'blue' : 'gray'} onClick={() => dispatch({ type: 'TOGGLE_METRONOME' })}>Click</Button>
+          <Button
+            size="xs"
+            variant={preRollBars > 0 ? 'filled' : 'light'}
+            color={preRollBars > 0 ? 'blue' : 'gray'}
+            onClick={handleCyclePreRoll}
+            title="Cycle pre-roll bars for recording"
+          >
+            {preRollBars > 0 ? `Pre ${preRollBars} bar${preRollBars === 1 ? '' : 's'}` : 'Pre Off'}
+          </Button>
           <Button size="xs" variant={snapEnabled ? 'filled' : 'light'} color={snapEnabled ? 'blue' : 'gray'} onClick={() => dispatch({ type: 'TOGGLE_SNAP' })}>Snap</Button>
           <Button size="xs" variant={autoScroll ? 'filled' : 'light'} color={autoScroll ? 'blue' : 'gray'} onClick={() => dispatch({ type: 'TOGGLE_AUTO_SCROLL' })}>Follow</Button>
 

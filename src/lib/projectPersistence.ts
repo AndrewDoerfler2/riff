@@ -162,6 +162,7 @@ export interface RiffProjectFile {
   timeSignature: string;
   loopEnabled: boolean; loopStart: number; loopEnd: number;
   metronomeEnabled: boolean; snapEnabled: boolean;
+  preRollBars?: number;
   masterVolume: number; masterPan: number;
   zoom: number;
   aiConfig: {
@@ -183,6 +184,7 @@ function serializeProject(state: DAWState, includeAudio: boolean): RiffProjectFi
     timeSignature: state.timeSignature,
     loopEnabled: state.loopEnabled, loopStart: state.loopStart, loopEnd: state.loopEnd,
     metronomeEnabled: state.metronomeEnabled, snapEnabled: state.snapEnabled,
+    preRollBars: state.preRollBars,
     masterVolume: state.masterVolume, masterPan: state.masterPan,
     zoom: state.zoom,
     aiConfig: {
@@ -267,6 +269,7 @@ async function hydrateProject(
     timeSignature: file.timeSignature as DAWState['timeSignature'],
     loopEnabled: file.loopEnabled, loopStart: file.loopStart, loopEnd: file.loopEnd,
     metronomeEnabled: file.metronomeEnabled, snapEnabled: file.snapEnabled,
+    preRollBars: Math.max(0, Math.min(4, Math.round(file.preRollBars ?? 0))),
     masterVolume: file.masterVolume, masterPan: file.masterPan,
     zoom: file.zoom,
     aiConfig: {

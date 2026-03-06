@@ -26,10 +26,12 @@ Riff currently supports:
 - Project persistence, export/import, and schema-version tests are in place.
 - Mix assistant now supports A/B snapshot slots with save/recall + one-click swap between two stored mixes.
 - MIDI chord swap now inserts a voiced chord when the target beat is empty, using nearby note context for range/duration/velocity.
+- Transport now includes a live input level meter while in record-ready mode and during active recording.
+- Transport now supports recording pre-roll/count-in (off/1 bar/2 bars) with countdown, click accents, and persisted project setting.
 
 ## Next Focus
 
-- Input level meter
+- Overdub mode
 - Timeline editing improvements: split, loop drag, beat snapping, crossfades, track reorder
 
 ---
@@ -91,8 +93,8 @@ Riff currently supports:
 
 ### Audio Engine
 - [x] Auto-scroll during playback/recording
-- [ ] Input level meter
-- [ ] Count-in / pre-roll
+- [x] Input level meter
+- [x] Count-in / pre-roll
 - [ ] Overdub mode
 - [ ] Worker/off-main-thread waveform generation
 
@@ -157,11 +159,11 @@ Riff currently supports:
 
 ---
 
-> [Run 2026-03-06] — Added `autoScroll: boolean` state + `TOGGLE_AUTO_SCROLL` action. Replaced the basic page-jump in Timeline with a robust effect that fires during both play and recording, handles loop-back (playhead behind visible area), and uses LEAD_IN_FRAC=0.15/TRIGGER_FRAC=0.80 for natural page-turn feel. Added "Follow" toggle button to Transport bar alongside Loop/Click/Snap. TS check clean.
+> [Run 2026-03-06] Added persisted recording pre-roll/count-in (`preRollBars`) with Transport control (Off/1 bar/2 bars), visual countdown badge, accented count-in clicks, and stop-cancel safety before recording starts. Verified with reducer + persistence tests and TS check.
 
 ## Notes for Automated Runs
 
-- `completedCount`: 45
+- `completedCount`: 47
 - Project path: `/Users/andrewdoerfler/Projects/Riff/riff`
 - TypeScript check: run `npx tsc -p tsconfig.app.json --noEmit`
 - Testing: run relevant Vitest scope when applicable and document pass/fail
