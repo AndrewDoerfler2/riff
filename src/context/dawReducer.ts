@@ -144,7 +144,7 @@ function replaceChordInClipMidiNotes(
 ): NoteEvent[] {
   const semitone = CHORD_ROOT_TO_SEMITONE[root];
   const intervals = CHORD_INTERVALS[quality];
-  if (semitone == null || !intervals?.length || notes.length === 0) {
+  if (semitone == null || !intervals?.length) {
     return notes;
   }
 
@@ -160,7 +160,44 @@ function replaceChordInClipMidiNotes(
     .map(({ index }) => index);
 
   const indices = groupIndices.length > 0 ? groupIndices : fallbackIndices;
-  if (indices.length === 0) return notes;
+  if (indices.length === 0) {
+    if (notes.length === 0) return notes;
+
+    const nearestNote = notes
+      .slice()
+      .sort((left, right) => Math.abs(left.startBeats - atBeat) - Math.abs(right.startBeats - atBeat))[0];
+    if (!nearestNote) return notes;
+
+    const nearbyGroup = notes.filter((note) => Math.abs(note.startBeats - nearestNote.startBeats) <= EPS);
+    const templateGroup = nearbyGroup.length > 0 ? nearbyGroup : [nearestNote];
+    const templateMin = Math.min(...templateGroup.map(note => note.midi));
+    const templateMax = Math.max(...templateGroup.map(note => note.midi));
+    const templateAverage = templateGroup.reduce((sum, note) => sum + note.midi, 0) / templateGroup.length;
+    const avgDuration = templateGroup.reduce((sum, note) => sum + note.durationBeats, 0) / templateGroup.length;
+    const avgVelocity = templateGroup.reduce((sum, note) => sum + note.velocity, 0) / templateGroup.length;
+
+    const minMidi = clamp(templateMin - 2, 0, 127);
+    const maxMidi = clamp(templateMax + 2, 0, 127);
+    const rootBase = 12 * Math.round((templateAverage - semitone) / 12) + semitone;
+    const targetCount = Math.max(3, templateGroup.length);
+    const chordTones: number[] = [];
+    for (let i = 0; i < targetCount; i += 1) {
+      const octave = Math.floor(i / intervals.length);
+      const interval = intervals[i % intervals.length];
+      chordTones.push(rootBase + interval + 12 * octave);
+    }
+
+    const inserted = chordTones
+      .sort((left, right) => left - right)
+      .map((tone) => ({
+        midi: revoiceMidi(tone, minMidi, maxMidi),
+        startBeats: Math.max(0, atBeat),
+        durationBeats: Math.max(0.25, avgDuration),
+        velocity: clamp(avgVelocity, 0.05, 1),
+      }));
+
+    return sortMidiNotes([...notes, ...inserted]);
+  }
 
   const group = indices.map((index) => notes[index]);
   const groupStart = Math.min(...group.map(note => note.startBeats));

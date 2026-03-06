@@ -25,10 +25,10 @@ Riff currently supports:
 - Mixer AI assistant has been split into a dedicated component/hook structure for easier iteration.
 - Project persistence, export/import, and schema-version tests are in place.
 - Mix assistant now supports A/B snapshot slots with save/recall + one-click swap between two stored mixes.
+- MIDI chord swap now inserts a voiced chord when the target beat is empty, using nearby note context for range/duration/velocity.
 
 ## Next Focus
 
-- Chord insertion at empty beats in generated MIDI
 - Input level meter
 - Timeline editing improvements: split, loop drag, beat snapping, crossfades, track reorder
 
@@ -86,7 +86,7 @@ Riff currently supports:
 - [x] Use Take as MIDI clips
 - [x] Piano roll for generated clips
 - [x] Chord/beat edit tools for generated clips
-- [ ] Chord insert at empty beat
+- [x] Chord insert at empty beat
 - [x] Render edited MIDI back to audio
 
 ### Audio Engine
@@ -161,7 +161,7 @@ Riff currently supports:
 
 ## Notes for Automated Runs
 
-- `completedCount`: 44
+- `completedCount`: 45
 - Project path: `/Users/andrewdoerfler/Projects/Riff/riff`
 - TypeScript check: run `npx tsc -p tsconfig.app.json --noEmit`
 - Testing: run relevant Vitest scope when applicable and document pass/fail

@@ -526,6 +526,69 @@ describe('MIDI note operations', () => {
     const note = s.tracks[0].clips[0].midiNotes![0];
     expect(note.durationBeats).toBeGreaterThanOrEqual(0.05);
   });
+
+  it('REPLACE_MIDI_CHORD updates existing notes at the selected beat', () => {
+    const chordClipId = 'chord-clip-1';
+    let s = dawReducer(makeState(), {
+      type: 'ADD_CLIP',
+      payload: {
+        trackId,
+        clip: makeClip({
+          id: chordClipId,
+          startTime: 0,
+          midiNotes: [
+            makeNote({ midi: 60, startBeats: 2, durationBeats: 1, velocity: 0.75 }),
+            makeNote({ midi: 64, startBeats: 2, durationBeats: 1, velocity: 0.75 }),
+            makeNote({ midi: 67, startBeats: 2, durationBeats: 1, velocity: 0.75 }),
+          ],
+        }),
+      },
+    });
+
+    s = dawReducer(s, {
+      type: 'REPLACE_MIDI_CHORD',
+      payload: { trackId, clipId: chordClipId, atBeat: 2, root: 'D', quality: 'minor' },
+    });
+
+    const notes = s.tracks[0].clips[0].midiNotes!;
+    expect(notes).toHaveLength(3);
+    expect(notes.map(note => note.startBeats)).toEqual([2, 2, 2]);
+    expect(notes.map(note => note.midi)).toEqual([62, 65, 69]);
+  });
+
+  it('REPLACE_MIDI_CHORD inserts a new chord when target beat is empty', () => {
+    const chordClipId = 'chord-clip-2';
+    let s = dawReducer(makeState(), {
+      type: 'ADD_CLIP',
+      payload: {
+        trackId,
+        clip: makeClip({
+          id: chordClipId,
+          startTime: 0,
+          midiNotes: [
+            makeNote({ midi: 60, startBeats: 0, durationBeats: 1, velocity: 0.72 }),
+            makeNote({ midi: 64, startBeats: 0, durationBeats: 1, velocity: 0.72 }),
+            makeNote({ midi: 67, startBeats: 0, durationBeats: 1, velocity: 0.72 }),
+          ],
+        }),
+      },
+    });
+
+    s = dawReducer(s, {
+      type: 'REPLACE_MIDI_CHORD',
+      payload: { trackId, clipId: chordClipId, atBeat: 2, root: 'A', quality: 'minor' },
+    });
+
+    const notes = s.tracks[0].clips[0].midiNotes!;
+    const inserted = notes.filter(note => note.startBeats === 2);
+    expect(notes).toHaveLength(6);
+    expect(inserted).toHaveLength(3);
+    expect(inserted.map(note => ((note.midi % 12) + 12) % 12)).toEqual([0, 4, 9]);
+    inserted.forEach((note) => {
+      expect(note.durationBeats).toBe(1);
+      expect(note.velocity).toBeCloseTo(0.72, 4);
+    });
+  });
 });
 
 // ─── Track-level plugin: add / update / remove ────────────────────────────────
