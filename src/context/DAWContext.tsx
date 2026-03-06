@@ -64,7 +64,11 @@ export function useAudioEngineCtx(): AudioEngineReturn {
 // ─── Audio Engine Hook ─────────────────────────────────────────────────────────
 
 interface AudioEngineReturn {
-  startPlayback: (fromTime: number, tracks: Track[]) => void;
+  startPlayback: (
+    fromTime: number,
+    tracks: Track[],
+    options?: { recordingTrackIds?: string[]; overdubEnabled?: boolean },
+  ) => void;
   stopPlayback: () => void;
   startRecording: (armedTrackIds: string[]) => Promise<void>;
   stopRecording: () => Promise<Map<string, AudioClip>>;
@@ -254,11 +258,17 @@ export function useAudioEngine(): AudioEngineReturn {
     masterChainRef.current = null;
   }, []);
 
-  const startPlayback = useCallback((fromTime: number, tracks: Track[]) => {
+  const startPlayback = useCallback((
+    fromTime: number,
+    tracks: Track[],
+    options?: { recordingTrackIds?: string[]; overdubEnabled?: boolean },
+  ) => {
     const ctx = getCtx();
     stopPlayback();
     startTimeRef.current = ctx.currentTime - fromTime;
     projectStartRef.current = fromTime;
+    const recordingTrackIdSet = new Set(options?.recordingTrackIds ?? []);
+    const shouldSuppressArmedTrackPlayback = recordingTrackIdSet.size > 0 && options?.overdubEnabled === false;
 
     // 1. Create master chain (compressor + analysers → destination)
     const masterGainVal = state.masterVolume;
@@ -286,6 +296,7 @@ export function useAudioEngine(): AudioEngineReturn {
       trackBusMapRef.current.set(track.id, bus);
 
       // Schedule clips — each gets its own plugin chain feeding the bus
+      if (shouldSuppressArmedTrackPlayback && recordingTrackIdSet.has(track.id)) return;
       track.clips.forEach(clip => {
         if (!clip.audioBuffer) return;
         const clipOffsetAtPlayhead = Math.max(0, fromTime - clip.startTime);

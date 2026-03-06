@@ -293,6 +293,7 @@ export const initialDAWState: DAWState = {
   metronomeEnabled: false,
   snapEnabled: true,
   preRollBars: 0,
+  overdubEnabled: true,
 
   tracks: initialTracks,
   selectedTrackId: null,
@@ -337,6 +338,7 @@ export function dawReducer(state: DAWState, action: DAWAction): DAWState {
     case 'TOGGLE_METRONOME': return { ...state, metronomeEnabled: !state.metronomeEnabled };
     case 'TOGGLE_SNAP': return { ...state, snapEnabled: !state.snapEnabled };
     case 'SET_PRE_ROLL_BARS': return { ...state, preRollBars: Math.max(0, Math.min(4, Math.round(action.payload))) };
+    case 'TOGGLE_OVERDUB': return { ...state, overdubEnabled: !state.overdubEnabled };
     case 'TOGGLE_AUTO_SCROLL': return { ...state, autoScroll: !state.autoScroll };
     case 'SET_MASTER_VOLUME': return { ...state, masterVolume: action.payload };
     case 'SET_ZOOM': return { ...state, zoom: Math.max(20, Math.min(600, action.payload)) };

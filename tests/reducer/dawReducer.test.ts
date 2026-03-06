@@ -259,6 +259,14 @@ describe('Transport: extended actions', () => {
     expect(mid.preRollBars).toBe(2);
   });
 
+  it('TOGGLE_OVERDUB flips overdubEnabled', () => {
+    const base = makeState({ overdubEnabled: true });
+    const toggled = dawReducer(base, { type: 'TOGGLE_OVERDUB' });
+    const toggledBack = dawReducer(toggled, { type: 'TOGGLE_OVERDUB' });
+    expect(toggled.overdubEnabled).toBe(false);
+    expect(toggledBack.overdubEnabled).toBe(true);
+  });
+
   it('SET_ZOOM clamps below 20 and above 600', () => {
     const lo = dawReducer(makeState(), { type: 'SET_ZOOM', payload: 1 });
     const hi = dawReducer(makeState(), { type: 'SET_ZOOM', payload: 9999 });

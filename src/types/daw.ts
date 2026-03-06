@@ -171,6 +171,7 @@ export interface DAWState {
   metronomeEnabled: boolean;
   snapEnabled: boolean;
   preRollBars: number;
+  overdubEnabled: boolean;
 
   // Tracks
   tracks: Track[];
@@ -209,6 +210,7 @@ export type DAWAction =
   | { type: 'TOGGLE_METRONOME' }
   | { type: 'TOGGLE_SNAP' }
   | { type: 'SET_PRE_ROLL_BARS'; payload: number }
+  | { type: 'TOGGLE_OVERDUB' }
   | { type: 'TOGGLE_AUTO_SCROLL' }
   | { type: 'ADD_TRACK'; payload: TrackType }
   | { type: 'ADD_TRACK_WITH_DATA'; payload: Track }

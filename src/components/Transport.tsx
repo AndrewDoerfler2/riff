@@ -44,7 +44,8 @@ export default function Transport() {
     isRecordingActive,
   } = useAudioEngineCtx();
   const { isPlaying, isRecording, currentTime, bpm, timeSignature, loopEnabled,
-          metronomeEnabled, snapEnabled, preRollBars, autoScroll, masterVolume, tracks } = state;
+          metronomeEnabled, snapEnabled, preRollBars, overdubEnabled,
+          autoScroll, masterVolume, tracks } = state;
 
   const [editingBpm, setEditingBpm] = useState(false);
   const [bpmInput, setBpmInput] = useState(String(bpm));
@@ -221,7 +222,13 @@ export default function Transport() {
             }
           }
 
-          startPlayback(lastTimeRef.current, tracksRef.current);
+          startPlayback(
+            lastTimeRef.current,
+            tracksRef.current,
+            recordLatchRef.current
+              ? { recordingTrackIds: armedIds, overdubEnabled }
+              : undefined,
+          );
 
           const tick = () => {
             const t = currentAudioTime();
@@ -466,6 +473,15 @@ export default function Transport() {
             title="Cycle pre-roll bars for recording"
           >
             {preRollBars > 0 ? `Pre ${preRollBars} bar${preRollBars === 1 ? '' : 's'}` : 'Pre Off'}
+          </Button>
+          <Button
+            size="xs"
+            variant={overdubEnabled ? 'filled' : 'light'}
+            color={overdubEnabled ? 'blue' : 'gray'}
+            onClick={() => dispatch({ type: 'TOGGLE_OVERDUB' })}
+            title="Overdub keeps existing clips audible on armed tracks while recording"
+          >
+            Overdub
           </Button>
           <Button size="xs" variant={snapEnabled ? 'filled' : 'light'} color={snapEnabled ? 'blue' : 'gray'} onClick={() => dispatch({ type: 'TOGGLE_SNAP' })}>Snap</Button>
           <Button size="xs" variant={autoScroll ? 'filled' : 'light'} color={autoScroll ? 'blue' : 'gray'} onClick={() => dispatch({ type: 'TOGGLE_AUTO_SCROLL' })}>Follow</Button>

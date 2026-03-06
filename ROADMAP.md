@@ -28,10 +28,10 @@ Riff currently supports:
 - MIDI chord swap now inserts a voiced chord when the target beat is empty, using nearby note context for range/duration/velocity.
 - Transport now includes a live input level meter while in record-ready mode and during active recording.
 - Transport now supports recording pre-roll/count-in (off/1 bar/2 bars) with countdown, click accents, and persisted project setting.
+- Transport now includes an Overdub mode toggle, with persisted state and non-overdub record behavior that suppresses existing armed-track clip playback.
 
 ## Next Focus
 
-- Overdub mode
 - Timeline editing improvements: split, loop drag, beat snapping, crossfades, track reorder
 
 ---
@@ -95,7 +95,7 @@ Riff currently supports:
 - [x] Auto-scroll during playback/recording
 - [x] Input level meter
 - [x] Count-in / pre-roll
-- [ ] Overdub mode
+- [x] Overdub mode
 - [ ] Worker/off-main-thread waveform generation
 
 ### Timeline Improvements
@@ -163,7 +163,7 @@ Riff currently supports:
 
 ## Notes for Automated Runs
 
-- `completedCount`: 47
+- `completedCount`: 48
 - Project path: `/Users/andrewdoerfler/Projects/Riff/riff`
 - TypeScript check: run `npx tsc -p tsconfig.app.json --noEmit`
 - Testing: run relevant Vitest scope when applicable and document pass/fail
