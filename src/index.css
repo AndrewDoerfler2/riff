@@ -1,0 +1,19 @@
+/* Base reset — all DAW-specific styles live in App.css */
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Override Vite default flex layout */
+  display: block !important;
+  place-items: unset !important;
+  min-height: unset !important;
+}
+
+button { font-family: inherit; cursor: pointer; }
+input, select, textarea { font-family: inherit; }
+a { color: inherit; text-decoration: none; }
+button:focus, button:focus-visible { outline: none; }
