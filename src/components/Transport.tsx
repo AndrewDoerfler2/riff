@@ -387,6 +387,7 @@ export default function Transport() {
 
   return (
     <Paper
+      className="transport-shell"
       radius={0}
       withBorder
       px="md"
@@ -399,8 +400,8 @@ export default function Transport() {
         background: 'rgba(16, 20, 28, 0.97)',
       }}
     >
-      <Group justify="space-between" wrap="nowrap">
-        <Group gap="xs" wrap="nowrap">
+      <Group className="transport-row" justify="space-between" wrap="nowrap">
+        <Group className="transport-main-controls" gap="xs" wrap="nowrap">
           <ActionIcon
             variant="light"
             color="gray"
@@ -433,7 +434,7 @@ export default function Transport() {
           )}
         </Group>
 
-        <Group gap="md" wrap="nowrap" style={{ flex: 1, justifyContent: 'center' }}>
+        <Group className="transport-center-controls" gap="md" wrap="nowrap" style={{ flex: 1, justifyContent: 'center' }}>
           <Paper withBorder px="md" py={6} radius="md" style={{ background: '#0e131d', borderColor: '#2a3140', minWidth: 132 }}>
             <Stack gap={0} align="center">
               <Text ff="monospace" fw={700} size="lg" c="green.3">{formatTime(currentTime, bpm)}</Text>
@@ -470,6 +471,7 @@ export default function Transport() {
           </Group>
 
           <NativeSelect
+            className="transport-input-select"
             label="Input"
             size="xs"
             value={selectedInputId}
@@ -495,6 +497,7 @@ export default function Transport() {
           <ActionIcon variant="light" color="gray" size="lg" title="Refresh audio devices" onClick={() => { refreshInputs().catch(err => console.error('Failed to refresh audio devices:', err)); }}>↻</ActionIcon>
 
           <NativeSelect
+            className="transport-time-select"
             label="Time"
             size="xs"
             value={timeSignature}
@@ -503,7 +506,7 @@ export default function Transport() {
           />
         </Group>
 
-        <Group gap="md" wrap="nowrap">
+        <Group className="transport-right-controls" gap="md" wrap="nowrap">
           <Button size="xs" variant={loopEnabled ? 'filled' : 'light'} color={loopEnabled ? 'blue' : 'gray'} onClick={() => dispatch({ type: 'TOGGLE_LOOP' })}>Loop</Button>
           <Button size="xs" variant={metronomeEnabled ? 'filled' : 'light'} color={metronomeEnabled ? 'blue' : 'gray'} onClick={() => dispatch({ type: 'TOGGLE_METRONOME' })}>Click</Button>
           <Button
@@ -527,7 +530,7 @@ export default function Transport() {
           <Button size="xs" variant={snapEnabled ? 'filled' : 'light'} color={snapEnabled ? 'blue' : 'gray'} onClick={() => dispatch({ type: 'TOGGLE_SNAP' })}>Snap</Button>
           <Button size="xs" variant={autoScroll ? 'filled' : 'light'} color={autoScroll ? 'blue' : 'gray'} onClick={() => dispatch({ type: 'TOGGLE_AUTO_SCROLL' })}>Follow</Button>
 
-          <Box w={110}>
+          <Box className="transport-master-slider" w={110}>
             <Text size="xs" c="dimmed" mb={4}>Master {Math.round(masterVolume * 100)}%</Text>
             <Slider value={Math.round(masterVolume * 100)} onChange={value => dispatch({ type: 'SET_MASTER_VOLUME', payload: value / 100 })} size="sm" color="blue" label={value => `${value}%`} />
           </Box>

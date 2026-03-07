@@ -171,7 +171,7 @@ function MasterStrip({ meterLRef, meterRRef }: MasterStripProps) {
         <span className="ch-control-label">Pan</span>
         <input type="range" className="ch-pan" min={-1} max={1} step={0.01}
           value={state.masterPan ?? 0}
-          onChange={e => dispatch({ type: 'SET_MASTER_VOLUME', payload: parseFloat(e.target.value) })}
+          onChange={e => dispatch({ type: 'SET_MASTER_PAN', payload: parseFloat(e.target.value) })}
         />
       </div>
 

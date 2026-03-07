@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from 'vitest';
-import type { AudioClip, DAWState, NoteEvent, Track } from '../../src/types/daw';
+import type { AudioClip, DAWState, NoteEvent, Track, VideoClip } from '../../src/types/daw';
 import { dawReducer, initialDAWState, makePlugin, makeTrack } from '../../src/context/dawReducer';
 
 function makeState(overrides?: Partial<DAWState>): DAWState {
@@ -62,6 +62,28 @@ function makeClip(partial?: Partial<AudioClip>): AudioClip {
   };
 }
 
+function makeVideoClip(partial?: Partial<VideoClip>): VideoClip {
+  return {
+    id: 'video-clip-1',
+    name: 'Video 1',
+    startTime: 1,
+    duration: 4,
+    src: 'blob:video',
+    thumbnailUrl: '',
+    color: '#ff9f0a',
+    audioWaveformPeaks: [0.1, 0.4, 0.2],
+    trimIn: 0,
+    trimOut: 0,
+    opacity: 1,
+    volume: 1,
+    layoutX: 0.5,
+    layoutY: 0.5,
+    layoutScale: 1,
+    textOverlays: [],
+    ...partial,
+  };
+}
+
 describe('dawReducer', () => {
   it('clamps bpm to minimum and maximum bounds', () => {
     const lowState = dawReducer(initialDAWState, { type: 'SET_BPM', payload: 10 });
@@ -69,6 +91,16 @@ describe('dawReducer', () => {
 
     expect(lowState.bpm).toBe(20);
     expect(highState.bpm).toBe(300);
+  });
+
+  it('updates and clamps master pan bounds', () => {
+    const left = dawReducer(initialDAWState, { type: 'SET_MASTER_PAN', payload: -2 });
+    const center = dawReducer(initialDAWState, { type: 'SET_MASTER_PAN', payload: 0.25 });
+    const right = dawReducer(initialDAWState, { type: 'SET_MASTER_PAN', payload: 5 });
+
+    expect(left.masterPan).toBe(-1);
+    expect(center.masterPan).toBe(0.25);
+    expect(right.masterPan).toBe(1);
   });
 
   it('adds a new track with ADD_TRACK', () => {
@@ -187,6 +219,148 @@ describe('dawReducer', () => {
 
     const removed = dawReducer(updated, { type: 'REMOVE_MASTER_PLUGIN', payload: plugin.id });
     expect(removed.masterPlugins).toHaveLength(0);
+  });
+
+  it('clamps video clip update bounds including PiP layout values', () => {
+    const videoTrack = makeTrack('video');
+    const clip = makeVideoClip();
+    const base = makeState({
+      tracks: [
+        { ...videoTrack, videoClips: [clip] },
+      ],
+    });
+
+    const updated = dawReducer(base, {
+      type: 'UPDATE_VIDEO_CLIP',
+      payload: {
+        trackId: videoTrack.id,
+        clipId: clip.id,
+        updates: {
+          trimIn: -1,
+          trimOut: -2,
+          opacity: 4,
+          volume: -3,
+          startTime: -10,
+          layoutX: 3,
+          layoutY: -1,
+          layoutScale: 10,
+        },
+      },
+    });
+
+    expect(updated.tracks[0].videoClips[0]).toMatchObject({
+      trimIn: 0,
+      trimOut: 0,
+      opacity: 1,
+      volume: 0,
+      startTime: 0,
+      layoutX: 1,
+      layoutY: 0,
+      layoutScale: 2,
+    });
+  });
+
+  it('adds and clamps subtitle overlays on video clips', () => {
+    const videoTrack = makeTrack('video');
+    const clip = makeVideoClip({ duration: 4, trimIn: 0.5, trimOut: 0.5 });
+    const base = makeState({ tracks: [{ ...videoTrack, videoClips: [clip] }] });
+
+    const added = dawReducer(base, {
+      type: 'ADD_VIDEO_TEXT_OVERLAY',
+      payload: {
+        trackId: videoTrack.id,
+        clipId: clip.id,
+        overlay: {
+          id: 'ov-1',
+          text: 'Intro title',
+          startOffset: 0.2,
+          endOffset: 1.5,
+          x: 0.5,
+          y: 0.8,
+          fontSize: 24,
+          opacity: 1,
+          bgOpacity: 0.45,
+        },
+      },
+    });
+    expect(added.tracks[0].videoClips[0].textOverlays).toHaveLength(1);
+
+    const updated = dawReducer(added, {
+      type: 'UPDATE_VIDEO_TEXT_OVERLAY',
+      payload: {
+        trackId: videoTrack.id,
+        clipId: clip.id,
+        overlayId: 'ov-1',
+        updates: {
+          startOffset: -5,
+          endOffset: 99,
+          x: 2,
+          y: -2,
+          fontSize: 200,
+          opacity: 3,
+          bgOpacity: -1,
+        },
+      },
+    });
+
+    expect(updated.tracks[0].videoClips[0].textOverlays[0]).toMatchObject({
+      startOffset: 0,
+      endOffset: 3,
+      x: 1,
+      y: 0,
+      fontSize: 72,
+      opacity: 1,
+      bgOpacity: 0,
+    });
+  });
+
+  it('partitions subtitle overlays when splitting a video clip', () => {
+    const videoTrack = makeTrack('video');
+    const clip = makeVideoClip({
+      startTime: 0,
+      duration: 6,
+      textOverlays: [
+        {
+          id: 'ov-1',
+          text: 'First',
+          startOffset: 0.5,
+          endOffset: 1.5,
+          x: 0.5,
+          y: 0.85,
+          fontSize: 24,
+          opacity: 1,
+          bgOpacity: 0.4,
+        },
+        {
+          id: 'ov-2',
+          text: 'Second',
+          startOffset: 2.4,
+          endOffset: 4,
+          x: 0.5,
+          y: 0.85,
+          fontSize: 24,
+          opacity: 1,
+          bgOpacity: 0.4,
+        },
+      ],
+    });
+    const base = makeState({ tracks: [{ ...videoTrack, videoClips: [clip] }] });
+
+    const split = dawReducer(base, {
+      type: 'SPLIT_VIDEO_CLIP',
+      payload: {
+        trackId: videoTrack.id,
+        clipId: clip.id,
+        splitTime: 2,
+      },
+    });
+
+    expect(split.tracks[0].videoClips).toHaveLength(2);
+    const left = split.tracks[0].videoClips[0];
+    const right = split.tracks[0].videoClips[1];
+    expect(left.textOverlays.map((overlay) => overlay.id)).toEqual(['ov-1']);
+    expect(right.textOverlays.map((overlay) => overlay.id)).toEqual(['ov-2']);
+    expect(right.textOverlays[0].startOffset).toBeCloseTo(0.4, 5);
   });
 
   it('saves, overwrites, and deletes custom plugin presets by type', () => {

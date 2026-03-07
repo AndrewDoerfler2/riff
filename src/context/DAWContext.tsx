@@ -290,7 +290,7 @@ export function useAudioEngine(): AudioEngineReturn {
 
     // 1. Create master chain (compressor + analysers → destination)
     const masterGainVal = state.masterVolume;
-    const master = createMasterChainNode(ctx, masterGainVal, state.masterPlugins);
+    const master = createMasterChainNode(ctx, masterGainVal, state.masterPan, state.masterPlugins);
     masterChainRef.current = master;
 
     // 2. Process bus tracks first (so regular tracks can route into them)
@@ -384,7 +384,7 @@ export function useAudioEngine(): AudioEngineReturn {
         sourceNodesRef.current.push({ source: src, cleanup });
       });
     });
-  }, [getCtx, stopPlayback, state.masterVolume, state.masterPlugins]);
+  }, [getCtx, stopPlayback, state.masterVolume, state.masterPan, state.masterPlugins]);
 
   useEffect(() => {
     if (!trackBusMapRef.current.size) return;
@@ -410,8 +410,9 @@ export function useAudioEngine(): AudioEngineReturn {
     // Sync master volume
     if (masterChainRef.current) {
       masterChainRef.current.masterGain.gain.value = state.masterVolume;
+      masterChainRef.current.masterPan.pan.value = state.masterPan;
     }
-  }, [tracks, state.masterVolume, state.currentTime, state.isPlaying, state.isRecording]);
+  }, [tracks, state.masterVolume, state.masterPan, state.currentTime, state.isPlaying, state.isRecording]);
 
   const startRecording = useCallback(async (armedTrackIds: string[]) => {
     if (!armedTrackIds.length || recordingActiveRef.current) return;

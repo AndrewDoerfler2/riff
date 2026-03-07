@@ -76,6 +76,8 @@ npm run preview
 npm run lint
 npm run test
 npm run test:watch
+npm run test:e2e:smoke
+npm run youtube:link -- --url https://www.youtube.com/watch?v=VIDEO_ID
 ```
 
 ## Major Features
@@ -140,6 +142,12 @@ Run the test suite:
 npm run test
 ```
 
+Run the Playwright smoke E2E:
+
+```bash
+npm run test:e2e:smoke
+```
+
 Build and type-check:
 
 ```bash
@@ -149,3 +157,77 @@ npm run build
 ## Roadmap
 
 The active implementation log and queue live in [ROADMAP.md](/Users/andrewdoerfler/Projects/Riff/riff/ROADMAP.md).
+
+## Launch Assets
+
+- Showcase arrangement and visual lock plan: [SHOWCASE_RELEASE_PLAN.md](/Users/andrewdoerfler/Projects/Riff/riff/SHOWCASE_RELEASE_PLAN.md)
+<!-- YOUTUBE_LINK:START -->
+- Public demo video: _Pending upload_
+<!-- YOUTUBE_LINK:END -->
+
+### Build a YouTube-ready music video package
+
+Use one command to combine your video + final audio into an upload-ready MP4 and generate metadata files:
+
+```bash
+npm run youtube:package -- \
+  --video /absolute/path/to/video.mp4 \
+  --audio /absolute/path/to/final-mix.wav \
+  --title "Your Song Title" \
+  --artist "Artist Name" \
+  --thumbnail /absolute/path/to/thumbnail.png \
+  --loop-video
+```
+
+Output package location:
+
+`dist/youtube/YYYY-MM-DD-your-song-title/`
+
+Package contents:
+
+- `your-song-title.mp4` (YouTube-ready music video)
+- `youtube-metadata.txt` (title/description/tags template)
+- `chapters.txt` (timestamps you can paste into description)
+- `package.json` (source/output manifest)
+
+Notes:
+
+- Requires `ffmpeg` and `ffprobe` on your system (`brew install ffmpeg` on macOS).
+- Use `--loop-video` if your audio is longer than the source video.
+
+### Record the public YouTube URL in docs
+
+After publishing in YouTube Studio, run:
+
+```bash
+npm run youtube:link -- --url https://www.youtube.com/watch?v=VIDEO_ID
+```
+
+Optional flags:
+
+- `--label "Custom link text"` (default: `Riff Showcase Demo (YouTube)`)
+- `--date YYYY-MM-DD` (default: today)
+- `--readme /absolute/path/to/README.md` (default: project README)
+
+### Export the final demo render pass
+
+Use this command to create a release-grade 1080p/30fps MP4 from your captured demo video and final WAV mix, with loudness normalization and chapter notes aligned to the showcase plan:
+
+```bash
+npm run demo:export -- \
+  --video /absolute/path/to/demo-capture.mp4 \
+  --audio /absolute/path/to/final-mix.wav \
+  --title "Riff Showcase Demo" \
+  --artist "Artist Name"
+```
+
+Output location:
+
+`dist/final-demo/YYYY-MM-DD-riff-showcase-demo/`
+
+The run writes:
+
+- `riff-showcase-demo-final.mp4` (publication-ready render)
+- `chapters.txt` (chapter timestamps from the locked visual sequence)
+- `export-notes.txt` (render settings + verification checklist)
+- `render-manifest.json` (machine-readable artifact manifest)

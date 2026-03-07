@@ -126,7 +126,12 @@ async function renderTracksToBuffer(state: DAWState, tracks: Track[]): Promise<{
 
   const ctx = new OfflineAudioContext(2, totalFrames, EXPORT_SAMPLE_RATE);
   const nodeContext = ctx as unknown as AudioContext;
-  const master = createMasterChainNode(nodeContext, state.masterVolume, state.masterPlugins);
+  const master = createMasterChainNode(
+    nodeContext,
+    state.masterVolume,
+    state.masterPan,
+    state.masterPlugins,
+  );
   const trackBusMap = new Map<string, ReturnType<typeof createTrackBusNode>>();
 
   const sortedTracks = [

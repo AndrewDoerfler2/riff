@@ -45,6 +45,7 @@ export interface TrackBusNode {
 export interface MasterChainNode {
   input: GainNode;
   masterGain: GainNode;
+  masterPan: StereoPannerNode;
   analyserL: AnalyserNode;
   analyserR: AnalyserNode;
   pluginBindings: PluginBinding[];
@@ -180,11 +181,14 @@ export function syncTrackBusNode(bus: TrackBusNode, track: Track): void {
 export function createMasterChainNode(
   ctx: AudioContext,
   masterVolume: number,
+  masterPanValue: number,
   masterPlugins: PluginInstance[],
 ): MasterChainNode {
   const input = ctx.createGain();
   const masterGain = ctx.createGain();
+  const masterPan = ctx.createStereoPanner();
   masterGain.gain.value = masterVolume;
+  masterPan.pan.value = masterPanValue;
 
   // Output bus compression: 4:1, -18dB, 10ms attack, 100ms release
   const busComp = ctx.createDynamicsCompressor();
@@ -213,7 +217,8 @@ export function createMasterChainNode(
   });
 
   currentNode.connect(masterGain);
-  masterGain.connect(busComp);
+  masterGain.connect(masterPan);
+  masterPan.connect(busComp);
   busComp.connect(splitter);
   splitter.connect(analyserL, 0);
   splitter.connect(analyserR, 1);
@@ -222,12 +227,13 @@ export function createMasterChainNode(
   return {
     input,
     masterGain,
+    masterPan,
     analyserL,
     analyserR,
     pluginBindings,
     cleanup: () => {
       cleanupCallbacks.forEach(fn => fn());
-      [input, masterGain, busComp, splitter, analyserL, analyserR].forEach(n => {
+      [input, masterGain, masterPan, busComp, splitter, analyserL, analyserR].forEach(n => {
         try { n.disconnect(); } catch {}
       });
     },

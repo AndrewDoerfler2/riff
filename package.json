@@ -9,8 +9,13 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
+    "demo:export": "node scripts/export-final-demo.mjs",
+    "youtube:package": "node scripts/youtube-music-video.mjs",
+    "youtube:link": "node scripts/publish-youtube-link.mjs",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:e2e:smoke": "playwright test tests/e2e/smoke.spec.ts"
   },
   "dependencies": {
     "@mantine/core": "^8.3.16",

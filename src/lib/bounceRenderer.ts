@@ -93,6 +93,7 @@ async function renderOffline(
   tracks: Track[],
   masterPlugins: PluginInstance[],
   masterVolume: number,
+  masterPan: number,
   soloTrackId: string | null,
   onProgress: (p: number, label: string) => void,
 ): Promise<AudioBuffer> {
@@ -139,8 +140,11 @@ async function renderOffline(
 
     const mgain = offCtx.createGain();
     mgain.gain.value = masterVolume;
+    const mpan = offCtx.createStereoPanner();
+    mpan.pan.value = Math.max(-1, Math.min(1, masterPan));
     busComp.connect(mgain);
-    mgain.connect(offCtx.destination);
+    mgain.connect(mpan);
+    mpan.connect(offCtx.destination);
 
     masterInput = inputGain;
   }
@@ -247,6 +251,7 @@ export async function bounceProjectToWav(
     state.tracks,
     state.masterPlugins,
     state.masterVolume,
+    state.masterPan,
     null,
     onProgress,
   );
@@ -269,6 +274,7 @@ export async function bounceStemToWav(
     state.tracks,
     [],     // no master plugins for stems
     1.0,    // unity master gain for stems
+    0,
     track.id,
     onProgress,
   );

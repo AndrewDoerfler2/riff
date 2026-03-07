@@ -3,6 +3,7 @@ import type { Track, AudioClip, AutomationLane, AutomationTarget } from '../../t
 import { useDAW } from '../../context/DAWContext';
 import LiveWaveform from '../LiveWaveform';
 import { ClipBlock } from './ClipBlock';
+import WaveformCanvas from '../WaveformCanvas';
 import {
   automationTargetKey,
   automationTargetLabel,
@@ -16,6 +17,16 @@ const RECORD_FLASH_MS = 500;
 const AUTOMATION_TOOLBAR_H = 32;
 const AUTOMATION_LANE_H = 58;
 const POINT_HIT_RADIUS = 9;
+
+function getVisibleVideoPeaks(peaks: number[], trimIn: number, trimOut: number, duration: number): number[] {
+  if (peaks.length === 0) return peaks;
+  const safeDuration = Math.max(0.001, duration);
+  const startRatio = Math.max(0, Math.min(1, trimIn / safeDuration));
+  const endRatio = Math.max(startRatio, Math.min(1, (duration - trimOut) / safeDuration));
+  const peakStart = Math.floor(startRatio * peaks.length);
+  const peakEnd = Math.max(peakStart + 1, Math.ceil(endRatio * peaks.length));
+  return peaks.slice(peakStart, peakEnd);
+}
 
 interface LaneOption {
   key: string;
@@ -510,20 +521,39 @@ export const TrackRow = memo(function TrackRow({
             />
           ))}
 
-          {track.videoClips.map((clip) => (
-            <div
-              key={clip.id}
-              className="video-clip-block"
-              style={{
-                left: clip.startTime * zoom,
-                width: Math.max(4, clip.duration * zoom),
-                background: track.color + '33',
-                borderLeft: `2px solid ${track.color}`,
-              }}
-            >
-              <span className="clip-label" style={{ color: track.color }}>🎬 {clip.name}</span>
-            </div>
-          ))}
+          {track.videoClips.map((clip) => {
+            const visibleDur = Math.max(0.1, clip.duration - clip.trimIn - clip.trimOut);
+            const visiblePeaks = getVisibleVideoPeaks(
+              clip.audioWaveformPeaks ?? [],
+              clip.trimIn,
+              clip.trimOut,
+              clip.duration,
+            );
+            return (
+              <div
+                key={clip.id}
+                className="video-clip-block"
+                style={{
+                  left: clip.startTime * zoom,
+                  width: Math.max(4, visibleDur * zoom),
+                  background: track.color + '33',
+                  borderLeft: `2px solid ${track.color}`,
+                  opacity: clip.opacity,
+                }}
+              >
+                <div className="video-clip-content">
+                  <span className="clip-label" style={{ color: track.color }}>🎬 {clip.name}</span>
+                  <WaveformCanvas
+                    peaks={visiblePeaks}
+                    color={track.color}
+                    width={Math.max(8, visibleDur * zoom - 8)}
+                    height={Math.max(14, Math.min(32, Math.max(MIN_TRACK_H, track.height) - 34))}
+                    gain={clip.volume}
+                  />
+                </div>
+              </div>
+            );
+          })}
         </div>
 
         {track.automationLaneExpanded && (

@@ -143,6 +143,10 @@ interface SerializedClip {
 
 interface SerializedVideoClip {
   id: string; name: string; startTime: number; duration: number; color: string;
+  audioWaveformPeaks?: number[];
+  trimIn?: number; trimOut?: number; opacity?: number; volume?: number;
+  layoutX?: number; layoutY?: number; layoutScale?: number;
+  textOverlays?: VideoClip['textOverlays'];
 }
 
 interface SerializedTrack {
@@ -175,6 +179,7 @@ export interface RiffProjectFile {
     parameters: Record<string, number>;
   }>>>;
   zoom: number;
+  autoScroll?: boolean;
   aiConfig: {
     genre: string; bpm: number; key: string; timeSignature: string;
     bars: number; instruments: string[];
@@ -199,6 +204,7 @@ function serializeProject(state: DAWState, includeAudio: boolean): RiffProjectFi
     masterVolume: state.masterVolume, masterPan: state.masterPan,
     pluginPresets: state.pluginPresets,
     zoom: state.zoom,
+    autoScroll: state.autoScroll,
     aiConfig: {
       genre: state.aiConfig.genre,
       bpm: state.aiConfig.bpm,
@@ -230,6 +236,10 @@ function serializeProject(state: DAWState, includeAudio: boolean): RiffProjectFi
       })),
       videoClips: track.videoClips.map(vc => ({
         id: vc.id, name: vc.name, startTime: vc.startTime, duration: vc.duration, color: vc.color,
+        audioWaveformPeaks: vc.audioWaveformPeaks,
+        trimIn: vc.trimIn, trimOut: vc.trimOut, opacity: vc.opacity, volume: vc.volume,
+        layoutX: vc.layoutX, layoutY: vc.layoutY, layoutScale: vc.layoutScale,
+        textOverlays: vc.textOverlays,
       })),
     })),
   };
@@ -266,6 +276,15 @@ async function hydrateProject(
         id: vc.id, name: vc.name, startTime: vc.startTime,
         duration: vc.duration, color: vc.color,
         src: '', thumbnailUrl: '',
+        audioWaveformPeaks: vc.audioWaveformPeaks ? [...vc.audioWaveformPeaks] : [],
+        trimIn: vc.trimIn ?? 0,
+        trimOut: vc.trimOut ?? 0,
+        opacity: vc.opacity ?? 1,
+        volume: vc.volume ?? 1,
+        layoutX: vc.layoutX ?? 0.5,
+        layoutY: vc.layoutY ?? 0.5,
+        layoutScale: vc.layoutScale ?? 1,
+        textOverlays: (vc.textOverlays ?? []).map((overlay) => ({ ...overlay })),
       }));
       return {
         id: st.id, name: st.name, type: st.type as Track['type'], color: st.color,
@@ -290,6 +309,7 @@ async function hydrateProject(
     masterVolume: file.masterVolume, masterPan: file.masterPan,
     pluginPresets: file.pluginPresets ?? {},
     zoom: file.zoom,
+    autoScroll: file.autoScroll ?? true,
     aiConfig: {
       genre: file.aiConfig.genre as DAWState['aiConfig']['genre'],
       bpm: file.aiConfig.bpm,

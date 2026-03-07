@@ -40,8 +40,10 @@ function makeState(): DAWState {
     ...initialDAWState,
     projectName: 'Persistence Roundtrip',
     bpm: 126,
+    autoScroll: false,
     preRollBars: 2,
     overdubEnabled: false,
+    masterPan: -0.2,
     pluginPresets: {
       eq: [
         {
@@ -88,7 +90,38 @@ function makeState(): DAWState {
             drumHits: [{ kind: 'kick', startBeats: 0, velocity: 101 }],
           },
         ],
-        videoClips: [],
+        videoClips: [
+          {
+            id: 'video-clip-1',
+            name: 'B-roll',
+            startTime: 0.5,
+            duration: 4,
+            src: 'blob:source',
+            thumbnailUrl: '',
+            color: '#ff9f0a',
+            audioWaveformPeaks: [0.12, 0.6, 0.2],
+            trimIn: 0.25,
+            trimOut: 0.5,
+            opacity: 0.9,
+            volume: 0.75,
+            layoutX: 0.68,
+            layoutY: 0.42,
+            layoutScale: 0.8,
+            textOverlays: [
+              {
+                id: 'txt-1',
+                text: 'Riff DAW demo',
+                startOffset: 0.4,
+                endOffset: 2.1,
+                x: 0.5,
+                y: 0.83,
+                fontSize: 30,
+                opacity: 0.95,
+                bgOpacity: 0.5,
+              },
+            ],
+          },
+        ],
       },
     ],
   };
@@ -131,17 +164,36 @@ describe('projectPersistence', () => {
 
     expect(loaded.projectName).toBe('Persistence Roundtrip');
     expect(loaded.bpm).toBe(126);
+    expect(loaded.autoScroll).toBe(false);
     expect(loaded.preRollBars).toBe(2);
     expect(loaded.overdubEnabled).toBe(false);
+    expect(loaded.masterPan).toBeCloseTo(-0.2, 5);
     expect(loaded.pluginPresets?.eq?.[0].name).toBe('Bright Vocal');
     expect(loaded.tracks?.[0].automationLaneExpanded).toBe(true);
     expect(loaded.tracks?.[0].automationLanes[0].points).toHaveLength(2);
     expect(loaded.tracks).toHaveLength(1);
     const clip = loaded.tracks?.[0].clips[0];
+    const videoClip = loaded.tracks?.[0].videoClips[0];
     expect(clip?.midiNotes).toHaveLength(2);
     expect(clip?.drumHits?.[0].kind).toBe('kick');
     expect(clip?.audioBuffer).toBeInstanceOf(MockAudioBuffer);
     expect(clip?.audioBuffer?.getChannelData(0)[2]).toBeCloseTo(0.5, 5);
+    expect(videoClip?.audioWaveformPeaks).toEqual([0.12, 0.6, 0.2]);
+    expect(videoClip?.trimIn).toBeCloseTo(0.25, 5);
+    expect(videoClip?.trimOut).toBeCloseTo(0.5, 5);
+    expect(videoClip?.layoutX).toBeCloseTo(0.68, 5);
+    expect(videoClip?.layoutY).toBeCloseTo(0.42, 5);
+    expect(videoClip?.layoutScale).toBeCloseTo(0.8, 5);
+    expect(videoClip?.textOverlays[0]).toMatchObject({
+      text: 'Riff DAW demo',
+      startOffset: 0.4,
+      endOffset: 2.1,
+      x: 0.5,
+      y: 0.83,
+      fontSize: 30,
+      opacity: 0.95,
+      bgOpacity: 0.5,
+    });
   });
 
   it('rejects incompatible schema from localStorage restore payload', async () => {

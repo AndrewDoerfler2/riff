@@ -19,6 +19,8 @@ import Mixer from './components/Mixer';
 import AIPanel from './components/AIPanel';
 import PluginRack from './components/PluginRack';
 import VideoEditor from './components/VideoEditor';
+import ProjectSettingsPanel from './components/ProjectSettingsPanel';
+import KeyboardShortcutsModal from './components/KeyboardShortcutsModal';
 import {
   saveProjectLocally,
   loadProjectLocally,
@@ -65,6 +67,9 @@ function DAWApp() {
   const [exportOp, setExportOp] = useState<ExportOp | null>(null);
   const cancelExportRef = useRef<CancelToken>({ cancelled: false });
   const [preflight, setPreflight] = useState<{ report: PreflightReport; kind: 'mix' | 'stems' } | null>(null);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+
+  const getPanelMinHeight = useCallback(() => (window.innerWidth <= 900 ? 180 : 220), []);
 
   const getTotalClipCount = useCallback(() => (
     state.tracks.reduce((sum, track) => sum + track.clips.length, 0)
@@ -280,10 +285,13 @@ function DAWApp() {
       loopEnd: 8,
       metronomeEnabled: false,
       snapEnabled: true,
+      preRollBars: 0,
+      overdubEnabled: true,
       masterVolume: 0.85,
       masterPan: 0,
       zoom: 100,
       scrollLeft: 0,
+      autoScroll: true,
     }});
     setSaveStatus('unsaved');
   }, [state.tracks, dispatch]);
@@ -291,6 +299,35 @@ function DAWApp() {
   const handleNameChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     dispatch({ type: 'SET_PROJECT_NAME', payload: e.target.value });
   }, [dispatch]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (
+        target instanceof HTMLInputElement
+        || target instanceof HTMLTextAreaElement
+        || target instanceof HTMLSelectElement
+        || (target instanceof HTMLElement && target.isContentEditable)
+      ) {
+        return;
+      }
+
+      const key = event.key.toLowerCase();
+      if ((event.metaKey || event.ctrlKey) && key === 's') {
+        event.preventDefault();
+        handleSaveNow();
+        return;
+      }
+
+      if (event.key === '?' || (event.code === 'Slash' && event.shiftKey)) {
+        event.preventDefault();
+        setShortcutsOpen(true);
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [handleSaveNow]);
 
   const setPanel = useCallback((panel: typeof activePanel) => {
     dispatch({ type: 'SET_ACTIVE_PANEL', payload: panel === activePanel ? null : panel });
@@ -306,7 +343,7 @@ function DAWApp() {
     const onMouseMove = (moveEvent: MouseEvent) => {
       if (!resizeStateRef.current) return;
       const nextHeight = resizeStateRef.current.startHeight + (resizeStateRef.current.startY - moveEvent.clientY);
-      setBottomPanelHeight(Math.max(220, Math.min(window.innerHeight * 0.7, nextHeight)));
+      setBottomPanelHeight(Math.max(getPanelMinHeight(), Math.min(window.innerHeight * 0.7, nextHeight)));
     };
 
     const onMouseUp = () => {
@@ -317,7 +354,18 @@ function DAWApp() {
 
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
-  }, [bottomPanelHeight]);
+  }, [bottomPanelHeight, getPanelMinHeight]);
+
+  useEffect(() => {
+    const syncPanelHeightToViewport = () => {
+      const nextMax = window.innerHeight * 0.7;
+      const nextMin = getPanelMinHeight();
+      setBottomPanelHeight(current => Math.max(nextMin, Math.min(nextMax, current)));
+    };
+    syncPanelHeightToViewport();
+    window.addEventListener('resize', syncPanelHeightToViewport);
+    return () => window.removeEventListener('resize', syncPanelHeightToViewport);
+  }, [getPanelMinHeight]);
 
   const saveLabel =
     saveStatus === 'saving' ? '⏳ Saving…'
@@ -343,6 +391,7 @@ function DAWApp() {
     >
       <Paper
         component="header"
+        className="app-topbar"
         radius={0}
         withBorder
         px="md"
@@ -356,14 +405,15 @@ function DAWApp() {
           backdropFilter: 'blur(10px)',
         }}
       >
-        <Group justify="space-between" wrap="nowrap">
-          <Group gap="md" wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
+        <Group className="app-topbar-row" justify="space-between" wrap="nowrap">
+          <Group className="app-topbar-brand" gap="md" wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
             <Group gap={8} wrap="nowrap">
               <Text fw={700} size="lg" c="blue.2">RIFF</Text>
               <Badge variant="light" color="gray" radius="sm">DAW</Badge>
             </Group>
-            <Group gap="xs" wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
+            <Group className="app-project-group" gap="xs" wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
               <TextInput
+                className="app-project-name-input"
                 value={state.projectName}
                 onChange={handleNameChange}
                 aria-label="Project name"
@@ -383,7 +433,7 @@ function DAWApp() {
             </Group>
           </Group>
 
-          <Group gap="xs" wrap="nowrap">
+          <Group className="app-file-actions" gap="xs" wrap="nowrap">
             <Button size="xs" variant="light" color="gray" onClick={handleNewProject}>New</Button>
             <Button size="xs" variant="light" color="gray" onClick={handleSaveNow}>Save</Button>
             <Button size="xs" variant="filled" color="blue" onClick={handleBounceWav} disabled={!!exportOp}>
@@ -403,12 +453,14 @@ function DAWApp() {
             />
           </Group>
 
-          <Group gap="xs" wrap="nowrap">
+          <Group className="app-panel-actions" gap="xs" wrap="nowrap">
+            <Button size="xs" variant="light" color="gray" onClick={() => setShortcutsOpen(true)}>Shortcuts</Button>
             {([
               { id: 'ai' as const, label: 'AI' },
               { id: 'plugins' as const, label: 'FX' },
               { id: 'mixer' as const, label: 'Mixer' },
               { id: 'video' as const, label: 'Video' },
+              { id: 'settings' as const, label: 'Settings' },
             ] as const).map((panel) => (
               <Button
                 key={panel.id}
@@ -432,6 +484,7 @@ function DAWApp() {
 
       {activePanel && (
         <Paper
+          className="app-bottom-panel"
           withBorder
           radius={0}
           style={{
@@ -447,6 +500,7 @@ function DAWApp() {
           }}
         >
           <Box
+            className="app-bottom-panel-resizer"
             onMouseDown={startBottomPanelResize}
             title="Resize panel"
             style={{
@@ -455,13 +509,14 @@ function DAWApp() {
               background: 'linear-gradient(90deg, #1a2130 0%, #33415c 50%, #1a2130 100%)',
             }}
           />
-          <Group justify="space-between" px="md" py="xs" style={{ borderBottom: '1px solid #232937' }}>
-            <Group gap="xs">
+          <Group className="app-bottom-panel-tabs" justify="space-between" px="md" py="xs" style={{ borderBottom: '1px solid #232937' }}>
+            <Group className="app-bottom-tab-buttons" gap="xs">
               {([
                 { id: 'ai' as const, label: 'AI Backing Track' },
                 { id: 'plugins' as const, label: 'Plugin Rack' },
                 { id: 'mixer' as const, label: 'Mixer' },
                 { id: 'video' as const, label: 'Video Editor' },
+                { id: 'settings' as const, label: 'Project Settings' },
               ] as const).map((tab) => (
                 <Button
                   key={tab.id}
@@ -484,6 +539,7 @@ function DAWApp() {
             {activePanel === 'plugins' && <PluginRack />}
             {activePanel === 'mixer' && <Mixer />}
             {activePanel === 'video' && <VideoEditor />}
+            {activePanel === 'settings' && <ProjectSettingsPanel />}
           </Box>
         </Paper>
       )}
@@ -497,6 +553,8 @@ function DAWApp() {
           onAutoAdjust={handlePreflightAutoAdjust}
         />
       )}
+
+      <KeyboardShortcutsModal opened={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
 
       {exportOp && (
         <Box
@@ -555,6 +613,7 @@ function DAWApp() {
       )}
 
       <Paper
+        className="app-status-bar"
         radius={0}
         withBorder
         px="md"
@@ -577,8 +636,8 @@ function DAWApp() {
               {state.isRecording ? 'REC' : state.isPlaying ? 'PLAYING' : 'STOPPED'}
             </Badge>
           </Group>
-          <Text size="xs" c="dimmed">
-            riff DAW v0.1.0 | Space: Play/Pause | Home: Rewind | Ctrl/Cmd+Z: Undo/Redo | Ctrl+Scroll: Zoom | Ctrl+S: Save
+          <Text className="app-status-hint" size="xs" c="dimmed">
+            riff DAW v0.1.0 | Space: Play/Pause | Home: Rewind | Ctrl/Cmd+Z: Undo/Redo | Ctrl+Scroll: Zoom | Ctrl/Cmd+S: Save | ?: Shortcuts
           </Text>
         </Flex>
       </Paper>

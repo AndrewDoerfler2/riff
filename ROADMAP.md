@@ -40,14 +40,32 @@ Riff currently supports:
 - Plugin rack now supports user plugin presets per plugin type: save current parameters with a custom name, load/delete saved presets, and persist them in local project save plus `.riff` export/import.
 - Timeline automation lanes added for track volume/pan and plugin parameters, with draggable point editing and real-time playback interpolation through the live audio bus sync path.
 - Project undo/redo now runs through reducer-backed history (toolbar buttons + keyboard shortcuts), with transport/view-only actions excluded from snapshots.
+- Video editor now supports frame scrubbing with clip-aware preview sync, timeline playhead scrubbing, and single-frame step controls.
+- Showcase release plan now has a locked arrangement map and visual sequence in `SHOWCASE_RELEASE_PLAN.md` for export/publish execution.
+- Added `scripts/youtube-music-video.mjs` to package source video + final audio into a YouTube-ready MP4 with metadata/chapters outputs.
+- Added `scripts/export-final-demo.mjs` (`npm run demo:export`) to produce a publication-ready 1080p/30fps demo render with loudness normalization and release artifacts.
+- Added `scripts/publish-youtube-link.mjs` (`npm run youtube:link`) to stamp the final public YouTube URL into README after upload.
+- Video clips now include embedded-audio waveform strips (trim-aware) in both main timeline rows and the dedicated Video Editor lane.
+- Video editor preview now supports layered picture-in-picture composition with persisted per-clip X/Y/scale layout controls.
+- Video editor now supports subtitle/text overlays per clip with timed cue editing, preview compositing, reducer actions, and persistence round-trip.
+- Added a dedicated Project Settings panel (project/transport/timeline/master controls), including master pan wiring fixes in mixer/live engine/export paths and persistence for auto-scroll.
+- Added focused AIPanel interaction tests for controls, generation validation, and successful local-take creation.
+- Added Playwright smoke E2E scaffolding (`playwright.config.ts`, `tests/e2e/smoke.spec.ts`, npm scripts) to validate core shell boot and basic UI interaction.
+- Added a keyboard shortcuts panel (button + `?` hotkey), and wired `Ctrl/Cmd+S` to Save Now for parity with UI hints.
 
 ## Next Focus
 
-- Dedicated video clip reducer actions
+- Publish final demo render in YouTube Studio, then run `npm run youtube:link -- --url <public-url>` to finalize docs linking.
 
 ---
 
 ## Priority Items
+
+- [ ] **Launch & Publish (Highest Priority)**
+  - [x] Prepare final demo arrangement/project state for public showcase.
+  - [x] Export final demo video/audio pass for publication.
+  - [x] Create YouTube publish package (title, description, chapters, thumbnail, tags).
+  - [ ] Post finished project to YouTube and add the video link to project docs.
 
 - [x] **AI Audio Mixing Assistant**
   - [x] Add AI mix analysis pass that scans all tracks and proposes per-track gain targets (peak + LUFS-aware) before rendering.
@@ -82,6 +100,12 @@ Riff currently supports:
 ---
 
 ## Iteration Queue
+
+### Launch & Publishing (Highest Priority)
+- [x] Finalize release-ready arrangement + visuals for the showcase video.
+- [x] Export final demo render for YouTube.
+- [x] Draft YouTube metadata (title, description, chapters, tags) and thumbnail.
+- [ ] Publish to YouTube + link in README/project page.
 
 ### AI Mixing Assistant
 - [x] Auto gain staging
@@ -123,30 +147,30 @@ Riff currently supports:
 - [x] Plugin CPU / latency display
 
 ### Video Editor
-- [ ] Dedicated video clip reducer actions
-- [ ] Trim handles
-- [ ] Frame scrubbing
-- [ ] Audio waveform under video
-- [ ] Picture-in-picture / opacity
-- [ ] Subtitle / text overlay track
+- [x] Dedicated video clip reducer actions
+- [x] Trim handles
+- [x] Frame scrubbing
+- [x] Audio waveform under video
+- [x] Picture-in-picture / opacity
+- [x] Subtitle / text overlay track
 
 ### Project Management
 - [x] Project save/load
 - [x] Export audio
 - [x] Stem export
 - [x] Undo/redo
-- [ ] Project settings panel
+- [x] Project settings panel
 
 ### Testing & Quality
 - [x] Reducer unit tests
 - [x] AI renderer behavior tests
-- [ ] AIPanel interaction tests
+- [x] AIPanel interaction tests
 - [x] AIPanel section component split
 - [x] Persistence contract tests
-- [ ] Smoke E2E (Playwright)
+- [x] Smoke E2E (Playwright)
 
 ### Polish & UX
-- [ ] Keyboard shortcuts panel
+- [x] Keyboard shortcuts panel
 - [ ] Responsive layout
 - [ ] Empty/loading/error states
 - [ ] Performance diagnostics panel
@@ -170,12 +194,14 @@ Riff currently supports:
 
 ---
 
+> [Run 2026-03-06] Video trim handles: added `VidClipBlock` component with `move`/`trim-in`/`trim-out` drag modes. Left handle drag moves both `trimIn` and `startTime` together (keeps right edge fixed); right handle drag updates `trimOut` only. Cursor switches to grab/grabbing/ew-resize per mode. CSS: `.vid-trim-handle` with hover highlight, 8px wide, absolutely positioned inside clip. TS clean.
+> [Run 2026-03-06] Dedicated video clip reducer actions: added `trimIn`/`trimOut`/`opacity`/`volume` to `VideoClip`; added `ADD_VIDEO_CLIP`, `REMOVE_VIDEO_CLIP`, `UPDATE_VIDEO_CLIP`, `MOVE_VIDEO_CLIP`, `SPLIT_VIDEO_CLIP` actions to type + reducer. Fixed `VideoEditor` to use the new actions (was broken — dispatched `ADD_CLIP` to audio array but rendered `videoClips`). Updated persistence (serialize + hydrate with defaults for old saves). `TrackRow` now renders trimmed width and per-clip opacity. TS clean.
 > [Run 2026-03-06] Added persisted recording pre-roll/count-in (`preRollBars`) with Transport control (Off/1 bar/2 bars), visual countdown badge, accented count-in clicks, and stop-cancel safety before recording starts. Verified with reducer + persistence tests and TS check.
 > [Run 2026-03-06] Plugin CPU / latency display verified complete: `pluginPerformance.ts` provides heuristic cost profiles with parameter-sensitive CPU% and latency-samples estimates; per-plugin metrics shown in slot rows and editor head; chain totals shown in rack header. Added 17-test unit suite for `pluginPerformance.ts`. All 162 tests pass, TS clean.
 
 ## Notes for Automated Runs
 
-- `completedCount`: 56
+- `completedCount`: 65
 - Project path: `/Users/andrewdoerfler/Projects/Riff/riff`
 - TypeScript check: run `npx tsc -p tsconfig.app.json --noEmit`
 - Testing: run relevant Vitest scope when applicable and document pass/fail

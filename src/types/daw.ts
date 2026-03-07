@@ -73,11 +73,32 @@ export interface AudioClip {
 export interface VideoClip {
   id: string;
   name: string;
-  startTime: number;
-  duration: number;
+  startTime: number;   // seconds from project start (clip position on timeline)
+  duration: number;    // full source media duration in seconds
   src: string;
   thumbnailUrl: string;
   color: string;
+  audioWaveformPeaks: number[]; // normalized 0–1 embedded-audio peaks for timeline display
+  trimIn: number;      // seconds to skip from source start (0 = no trim)
+  trimOut: number;     // seconds to cut from source end (0 = no trim)
+  opacity: number;     // 0–1 blend/PiP opacity (1 = fully opaque)
+  volume: number;      // 0–1 gain for embedded audio track (1 = full)
+  layoutX: number;     // 0–1 horizontal PiP anchor in preview area
+  layoutY: number;     // 0–1 vertical PiP anchor in preview area
+  layoutScale: number; // 0.2–2 PiP scale multiplier
+  textOverlays: VideoTextOverlay[];
+}
+
+export interface VideoTextOverlay {
+  id: string;
+  text: string;
+  startOffset: number; // seconds from visible clip start
+  endOffset: number;   // seconds from visible clip start
+  x: number;           // 0–1 horizontal anchor in preview
+  y: number;           // 0–1 vertical anchor in preview
+  fontSize: number;    // 12–72 px
+  opacity: number;     // 0–1 text opacity
+  bgOpacity: number;   // 0–1 subtitle background opacity
 }
 
 // ─── Plugin Types ──────────────────────────────────────────────────────────────
@@ -178,7 +199,7 @@ export interface AIConfig {
 
 // ─── DAW State ─────────────────────────────────────────────────────────────────
 
-export type ActivePanel = 'ai' | 'plugins' | 'mixer' | 'video' | null;
+export type ActivePanel = 'ai' | 'plugins' | 'mixer' | 'video' | 'settings' | null;
 
 export interface DAWState {
   // Project
@@ -250,6 +271,7 @@ export type DAWAction =
   | { type: 'SOLO_TRACK'; payload: { id: string; soloed: boolean } }
   | { type: 'SELECT_TRACK'; payload: string | null }
   | { type: 'SET_MASTER_VOLUME'; payload: number }
+  | { type: 'SET_MASTER_PAN'; payload: number }
   | { type: 'SET_ZOOM'; payload: number }
   | { type: 'SET_SCROLL_LEFT'; payload: number }
   | { type: 'SET_ACTIVE_PANEL'; payload: ActivePanel }
@@ -287,4 +309,15 @@ export type DAWAction =
   | { type: 'UPDATE_MASTER_PLUGIN'; payload: { pluginId: string; updates: Partial<PluginInstance> } }
   | { type: 'APPLY_LOUDNESS_PRESET'; payload: { preset: LoudnessPreset; compressor: PluginInstance; limiter: PluginInstance } }
   | { type: 'CLEAR_LOUDNESS_PRESET' }
-  | { type: 'SPLIT_CLIP'; payload: { trackId: string; clipId: string; splitTime: number } };
+  | { type: 'SPLIT_CLIP'; payload: { trackId: string; clipId: string; splitTime: number } }
+  | { type: 'ADD_VIDEO_CLIP'; payload: { trackId: string; clip: VideoClip } }
+  | { type: 'REMOVE_VIDEO_CLIP'; payload: { trackId: string; clipId: string } }
+  | { type: 'UPDATE_VIDEO_CLIP'; payload: { trackId: string; clipId: string; updates: Partial<VideoClip> } }
+  | { type: 'MOVE_VIDEO_CLIP'; payload: { trackId: string; clipId: string; startTime: number } }
+  | { type: 'SPLIT_VIDEO_CLIP'; payload: { trackId: string; clipId: string; splitTime: number } }
+  | { type: 'ADD_VIDEO_TEXT_OVERLAY'; payload: { trackId: string; clipId: string; overlay: VideoTextOverlay } }
+  | {
+    type: 'UPDATE_VIDEO_TEXT_OVERLAY';
+    payload: { trackId: string; clipId: string; overlayId: string; updates: Partial<VideoTextOverlay> };
+  }
+  | { type: 'REMOVE_VIDEO_TEXT_OVERLAY'; payload: { trackId: string; clipId: string; overlayId: string } };
