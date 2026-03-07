@@ -16,8 +16,7 @@ export function formatClock(seconds: number): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(2, '0')}`;
 }
 
-export function computePeaks(buffer: AudioBuffer, numPoints: number): number[] {
-  const data = buffer.getChannelData(0);
+function computePeaksFromChannelData(data: Float32Array, numPoints: number): number[] {
   const blockSize = Math.max(1, Math.floor(data.length / numPoints));
   const stride = Math.max(1, Math.floor(blockSize / 48));
   const peaks: number[] = [];
@@ -32,6 +31,84 @@ export function computePeaks(buffer: AudioBuffer, numPoints: number): number[] {
     peaks.push(Math.min(1, max));
   }
   return peaks;
+}
+
+interface PeakRequestMessage {
+  id: number;
+  channelData: ArrayBuffer;
+  numPoints: number;
+}
+
+interface PeakResponseMessage {
+  id: number;
+  peaks: number[];
+}
+
+let peaksWorker: Worker | null = null;
+let workerRequestId = 0;
+const pendingPeakRequests = new Map<number, (peaks: number[]) => void>();
+
+function getPeaksWorker(): Worker | null {
+  if (typeof Worker === 'undefined') return null;
+  if (peaksWorker) return peaksWorker;
+
+  try {
+    const worker = new Worker(new URL('./audioPeaksWorker.ts', import.meta.url), { type: 'module' });
+    worker.onmessage = (event: MessageEvent<PeakResponseMessage>) => {
+      const resolve = pendingPeakRequests.get(event.data.id);
+      if (!resolve) return;
+      pendingPeakRequests.delete(event.data.id);
+      resolve(event.data.peaks);
+    };
+    worker.onerror = () => {
+      peaksWorker = null;
+    };
+    peaksWorker = worker;
+    return worker;
+  } catch {
+    peaksWorker = null;
+    return null;
+  }
+}
+
+export function computePeaks(buffer: AudioBuffer, numPoints: number): number[] {
+  const data = buffer.getChannelData(0);
+  return computePeaksFromChannelData(data, numPoints);
+}
+
+export async function computePeaksAsync(buffer: AudioBuffer, numPoints: number): Promise<number[]> {
+  const worker = getPeaksWorker();
+  if (!worker) {
+    return computePeaks(buffer, numPoints);
+  }
+
+  const requestId = ++workerRequestId;
+  const channelCopy = new Float32Array(buffer.getChannelData(0));
+
+  return new Promise<number[]>((resolve) => {
+    pendingPeakRequests.set(requestId, resolve);
+    const message: PeakRequestMessage = {
+      id: requestId,
+      channelData: channelCopy.buffer,
+      numPoints,
+    };
+    const fallbackTimer = window.setTimeout(() => {
+      if (!pendingPeakRequests.has(requestId)) return;
+      pendingPeakRequests.delete(requestId);
+      resolve(computePeaks(buffer, numPoints));
+    }, 2000);
+    pendingPeakRequests.set(requestId, (peaks) => {
+      window.clearTimeout(fallbackTimer);
+      resolve(peaks);
+    });
+    try {
+      worker.postMessage(message, [channelCopy.buffer]);
+    } catch {
+      window.clearTimeout(fallbackTimer);
+      pendingPeakRequests.delete(requestId);
+      resolve(computePeaks(buffer, numPoints));
+    }
+  });
 }
 
 export function readFileAsArrayBuffer(

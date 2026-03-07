@@ -8,10 +8,10 @@ import type {
 import {
   getRmsLevel,
   createTrackBusNode, syncTrackBusNode,
-  createMasterChainNode, buildClipPluginChain,
+  createMasterChainNode,
   type TrackBusNode, type MasterChainNode, type PlaybackHandle,
 } from '../lib/audioNodes';
-import { computePeaks, readFileAsArrayBuffer } from '../lib/audioUtils';
+import { computePeaksAsync, readFileAsArrayBuffer } from '../lib/audioUtils';
 import {
   makePlugin, makeTrack, dawReducer, initialDAWState,
 } from './dawReducer';
@@ -113,6 +113,9 @@ export function useAudioEngine(): AudioEngineReturn {
   const micSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const inputMeterEnabledRef = useRef(false);
   const streamDeviceIdRef = useRef('default');
+  // Tracks the last-seen plugin fingerprint per track to detect structural changes
+  // (insert, remove, reorder, bypass) that require a live chain rebuild.
+  const pluginFingerprintsRef = useRef<Map<string, string>>(new Map());
   const [isEngineReady, setIsEngineReady] = React.useState(false);
   const [analyserNode, setAnalyserNode] = React.useState<AnalyserNode | null>(null);
   const [availableInputs, setAvailableInputs] = React.useState<MediaDeviceInfo[]>([]);
@@ -291,9 +294,14 @@ export function useAudioEngine(): AudioEngineReturn {
         if (busNode) dest = busNode.sumInput;
       }
 
-      // Create per-track bus (summing node + gain/pan + stereo analysers)
+      // Create per-track bus (summing node + plugin chain + gain/pan + stereo analysers)
       const bus = createTrackBusNode(ctx, track, dest);
       trackBusMapRef.current.set(track.id, bus);
+      // Seed the fingerprint so the sync effect doesn't rebuild immediately after start
+      pluginFingerprintsRef.current.set(
+        track.id,
+        track.plugins.map(p => `${p.id}:${p.enabled}`).join(','),
+      );
 
       // Schedule clips — each gets its own plugin chain feeding the bus
       if (shouldSuppressArmedTrackPlayback && recordingTrackIdSet.has(track.id)) return;
@@ -305,21 +313,57 @@ export function useAudioEngine(): AudioEngineReturn {
         const src = ctx.createBufferSource();
         src.buffer = clip.audioBuffer;
         const clipGain = ctx.createGain();
-        clipGain.gain.value = clip.gain;
 
-        const pluginOut = buildClipPluginChain(ctx, track.plugins, bus.sumInput);
+        // Clips connect directly to the track bus; plugins live in the bus chain.
         src.connect(clipGain);
-        clipGain.connect(pluginOut.input);
+        clipGain.connect(bus.sumInput);
 
         const when = Math.max(0, ctx.currentTime + (clip.startTime - fromTime));
         const sourceOffset = clip.offset + clipOffsetAtPlayhead;
         const playbackDuration = Math.max(0.01, clip.duration - clipOffsetAtPlayhead);
+
+        // Apply fade-in / fade-out gain automation
+        const fadeIn = clip.fadeIn ?? 0;
+        const fadeOut = clip.fadeOut ?? 0;
+        const baseGain = clip.gain;
+        if (fadeIn > 0 || fadeOut > 0) {
+          const playheadInClip = clipOffsetAtPlayhead;
+          // Determine starting gain (may be mid-fade-in or mid-fade-out)
+          let startGain = baseGain;
+          const fadeOutStart = clip.duration - fadeOut;
+          if (fadeIn > 0 && playheadInClip < fadeIn) {
+            startGain = baseGain * (playheadInClip / fadeIn);
+          } else if (fadeOut > 0 && playheadInClip >= fadeOutStart) {
+            const into = playheadInClip - fadeOutStart;
+            startGain = baseGain * Math.max(0, 1 - into / fadeOut);
+          }
+          clipGain.gain.setValueAtTime(startGain, when);
+          // Finish fade-in ramp
+          if (fadeIn > 0 && playheadInClip < fadeIn) {
+            clipGain.gain.linearRampToValueAtTime(baseGain, when + (fadeIn - playheadInClip));
+          }
+          // Schedule fade-out
+          if (fadeOut > 0 && fadeOutStart > playheadInClip) {
+            const foWhen = when + (fadeOutStart - playheadInClip);
+            clipGain.gain.setValueAtTime(baseGain, foWhen);
+            clipGain.gain.linearRampToValueAtTime(0, foWhen + fadeOut);
+          } else if (fadeOut > 0 && playheadInClip >= fadeOutStart) {
+            // Already inside fade-out — ramp remaining portion
+            const alreadyIn = playheadInClip - fadeOutStart;
+            const remaining = Math.max(0, fadeOut - alreadyIn);
+            if (remaining > 0) {
+              clipGain.gain.linearRampToValueAtTime(0, when + remaining);
+            }
+          }
+        } else {
+          clipGain.gain.value = baseGain;
+        }
+
         src.start(when, sourceOffset, playbackDuration);
 
         const cleanup = () => {
           try { src.disconnect(); } catch {}
           try { clipGain.disconnect(); } catch {}
-          pluginOut.cleanup();
         };
         src.onended = cleanup;
         sourceNodesRef.current.push({ source: src, cleanup });
@@ -331,7 +375,18 @@ export function useAudioEngine(): AudioEngineReturn {
     if (!trackBusMapRef.current.size) return;
     tracks.forEach(track => {
       const bus = trackBusMapRef.current.get(track.id);
-      if (bus) syncTrackBusNode(bus, track);
+      if (!bus) return;
+
+      // Detect structural plugin changes: insert, remove, reorder, or bypass toggle.
+      // Parameter-only edits are handled cheaply by syncTrackBusNode's pluginBindings loop.
+      const fingerprint = track.plugins.map(p => `${p.id}:${p.enabled}`).join(',');
+      const prev = pluginFingerprintsRef.current.get(track.id);
+      if (fingerprint !== prev) {
+        bus.rebuildPlugins(track.plugins);
+        pluginFingerprintsRef.current.set(track.id, fingerprint);
+      }
+
+      syncTrackBusNode(bus, track);
     });
     // Sync master volume
     if (masterChainRef.current) {
@@ -376,7 +431,7 @@ export function useAudioEngine(): AudioEngineReturn {
             const blob = new Blob(chunks, { type: 'audio/webm' });
             const arrayBuffer = await blob.arrayBuffer();
             const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-            const peaks = computePeaks(audioBuffer, 200);
+            const peaks = await computePeaksAsync(audioBuffer, 200);
             const clip: AudioClip = {
               id: `clip_${Date.now()}_${trackId}`,
               name: 'Recording',
@@ -425,7 +480,7 @@ export function useAudioEngine(): AudioEngineReturn {
     options.onProgress?.(78, 'Decoding audio');
     const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
     options.onProgress?.(92, 'Generating waveform');
-    const peaks = computePeaks(audioBuffer, 200);
+    const peaks = await computePeaksAsync(audioBuffer, 200);
     options.onProgress?.(100, 'Complete');
 
     return {

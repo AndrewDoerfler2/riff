@@ -34,7 +34,10 @@ export interface TrackBusNode {
   trackPan: StereoPannerNode;
   postAnalyserL: AnalyserNode;
   postAnalyserR: AnalyserNode;
+  pluginEntry: GainNode;  // stable entry point to the live plugin chain
+  pluginExit: GainNode;   // stable exit point from the live plugin chain
   pluginBindings: PluginBinding[];
+  rebuildPlugins: (plugins: PluginInstance[]) => void; // live insert/bypass/reorder
   cleanup: () => void;
 }
 
@@ -83,6 +86,12 @@ export function createTrackBusNode(ctx: AudioContext, track: Track, destination:
   const postAnalyserL = makeAnalyser(ctx);
   const postAnalyserR = makeAnalyser(ctx);
 
+  // Stable entry/exit nodes for the live plugin chain.
+  // sumInput feeds pluginEntry; the internal plugin nodes are rebuilt between them;
+  // pluginExit always feeds trackGain, so volume/pan is never disrupted.
+  const pluginEntry = ctx.createGain();
+  const pluginExit = ctx.createGain();
+
   trackGain.gain.value = track.volume;
   trackPan.pan.value = track.pan;
 
@@ -91,8 +100,10 @@ export function createTrackBusNode(ctx: AudioContext, track: Track, destination:
   preSplitter.connect(preAnalyserL, 0);
   preSplitter.connect(preAnalyserR, 1);
 
-  // Signal path: sumInput → trackGain → trackPan → destination
-  sumInput.connect(trackGain);
+  // Main signal path: sumInput → pluginEntry → [plugin chain] → pluginExit → trackGain → trackPan → destination
+  sumInput.connect(pluginEntry);
+  // pluginEntry → ... → pluginExit is wired by the first buildChain() call below
+  pluginExit.connect(trackGain);
   trackGain.connect(trackPan);
   trackPan.connect(destination);
 
@@ -101,20 +112,58 @@ export function createTrackBusNode(ctx: AudioContext, track: Track, destination:
   postSplitter.connect(postAnalyserL, 0);
   postSplitter.connect(postAnalyserR, 1);
 
-  return {
+  // ── Live plugin chain state ────────────────────────────────────────────────
+  let chainCleanup: () => void = () => {};
+
+  const buildChain = (plugins: PluginInstance[]): PluginBinding[] => {
+    // Tear down previous internal nodes
+    chainCleanup();
+    try { pluginEntry.disconnect(); } catch {}
+
+    const cleanups: Array<() => void> = [];
+    const bindings: PluginBinding[] = [];
+    let current: AudioNode = pluginEntry;
+
+    for (const plugin of plugins) {
+      if (!plugin.enabled) continue; // bypassed plugins are skipped
+      const built = buildPluginNodes(ctx, plugin);
+      if (!built) continue;
+      current.connect(built.input);
+      current = built.output;
+      cleanups.push(built.cleanup);
+      bindings.push(...built.pluginBindings);
+    }
+    current.connect(pluginExit);
+
+    chainCleanup = () => cleanups.forEach(fn => fn());
+    return bindings;
+  };
+
+  // Wire initial chain
+  let pluginBindings = buildChain(track.plugins);
+
+  const bus: TrackBusNode = {
     trackId: track.id,
     sumInput,
     preAnalyserL, preAnalyserR,
     trackGain, trackPan,
     postAnalyserL, postAnalyserR,
-    pluginBindings: [],
-    cleanup: () => {
+    pluginEntry,
+    pluginExit,
+    pluginBindings,
+    rebuildPlugins(plugins: PluginInstance[]) {
+      this.pluginBindings = buildChain(plugins);
+    },
+    cleanup() {
+      chainCleanup();
       [sumInput, preSplitter, trackGain, trackPan, postSplitter,
-       preAnalyserL, preAnalyserR, postAnalyserL, postAnalyserR].forEach(n => {
+       preAnalyserL, preAnalyserR, postAnalyserL, postAnalyserR,
+       pluginEntry, pluginExit].forEach(n => {
         try { n.disconnect(); } catch {}
       });
     },
   };
+  return bus;
 }
 
 export function syncTrackBusNode(bus: TrackBusNode, track: Track): void {

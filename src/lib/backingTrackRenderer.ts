@@ -6,7 +6,7 @@ import type {
   NoteEvent,
   TimeSignature,
 } from '../types/daw';
-import { computePeaks } from './audioUtils';
+import { computePeaks, computePeaksAsync } from './audioUtils';
 import {
   clampToInstrumentRange,
   createLocalDrumPattern,
@@ -199,6 +199,22 @@ export function createClipFromBuffer(buffer: AudioBuffer, name: string, color: s
     duration: buffer.duration,
     audioBuffer: buffer,
     waveformPeaks: computePeaks(buffer, 200),
+    color,
+    gain: 1,
+    fadeIn: 0,
+    fadeOut: 0,
+    offset: 0,
+  };
+}
+
+export async function createClipFromBufferAsync(buffer: AudioBuffer, name: string, color: string): Promise<AudioClip> {
+  return {
+    id: `ai_clip_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    name,
+    startTime: 0,
+    duration: buffer.duration,
+    audioBuffer: buffer,
+    waveformPeaks: await computePeaksAsync(buffer, 200),
     color,
     gain: 1,
     fadeIn: 0,

@@ -42,6 +42,16 @@ function makeState(): DAWState {
     bpm: 126,
     preRollBars: 2,
     overdubEnabled: false,
+    pluginPresets: {
+      eq: [
+        {
+          id: 'preset-eq-1',
+          name: 'Bright Vocal',
+          pluginType: 'eq',
+          parameters: { low: -2, mid: 2.5, high: 4 },
+        },
+      ],
+    },
     tracks: [
       {
         ...track,
@@ -112,6 +122,7 @@ describe('projectPersistence', () => {
     expect(loaded.bpm).toBe(126);
     expect(loaded.preRollBars).toBe(2);
     expect(loaded.overdubEnabled).toBe(false);
+    expect(loaded.pluginPresets?.eq?.[0].name).toBe('Bright Vocal');
     expect(loaded.tracks).toHaveLength(1);
     const clip = loaded.tracks?.[0].clips[0];
     expect(clip?.midiNotes).toHaveLength(2);

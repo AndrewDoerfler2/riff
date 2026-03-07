@@ -2,7 +2,7 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import { useDAW } from '../context/DAWContext';
 import type { AIConfig, Instrument } from '../types/daw';
 import {
-  createClipFromBuffer,
+  createClipFromBufferAsync,
   generateLocalBackingTrackPlan,
   instrumentColor,
   prewarmSamples,
@@ -119,7 +119,7 @@ export default function AIPanel() {
   }, [stopPreview]);
 
   // Add all tracks from a generation to the timeline
-  const handleUseGeneration = useCallback((gen: AIGeneration) => {
+  const handleUseGeneration = useCallback(async (gen: AIGeneration) => {
     stopPreview();
     for (const renderedTrack of gen.tracks) {
       const color = instrumentColor(renderedTrack.instrument);
@@ -130,7 +130,7 @@ export default function AIPanel() {
       midiTrack.name = `${renderedTrack.sourceLabel} ${renderedTrack.label} MIDI`;
       midiTrack.color = color;
 
-      const audioClip = createClipFromBuffer(
+      const audioClip = await createClipFromBufferAsync(
         renderedTrack.buffer,
         `${renderedTrack.label} • ${gen.genre} ${gen.key} ${gen.bpm}bpm`,
         color,

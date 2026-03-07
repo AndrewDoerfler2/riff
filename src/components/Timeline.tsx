@@ -36,7 +36,22 @@ function clipKey(ref: ClipRef): string {
 export default function Timeline() {
   const { state, dispatch, createTrack } = useDAW();
   const { analyserNode, createClipFromFile } = useAudioEngineCtx();
-  const { tracks, zoom, scrollLeft, currentTime, isPlaying, isRecording, bpm, timeSignature, selectedTrackId, autoScroll } = state;
+  const {
+    tracks,
+    zoom,
+    scrollLeft,
+    currentTime,
+    isPlaying,
+    isRecording,
+    bpm,
+    timeSignature,
+    snapEnabled,
+    selectedTrackId,
+    autoScroll,
+    loopEnabled,
+    loopStart,
+    loopEnd,
+  } = state;
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
@@ -121,6 +136,37 @@ export default function Timeline() {
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
   }, [zoom, scrollLeft, dispatch]);
+
+  // Loop region drag — 'start', 'end', or 'body' (move whole region)
+  const startLoopDrag = useCallback((e: React.MouseEvent, handle: 'start' | 'end' | 'body') => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startClientX = e.clientX;
+    const origStart = loopStart;
+    const origEnd = loopEnd;
+    const origDuration = origEnd - origStart;
+
+    const onMouseMove = (me: MouseEvent) => {
+      const dx = (me.clientX - startClientX) / zoom;
+      if (handle === 'start') {
+        const newStart = Math.max(0, Math.min(origStart + dx, origEnd - 0.1));
+        dispatch({ type: 'SET_LOOP_RANGE', payload: { start: newStart, end: origEnd } });
+      } else if (handle === 'end') {
+        const newEnd = Math.max(origStart + 0.1, origEnd + dx);
+        dispatch({ type: 'SET_LOOP_RANGE', payload: { start: origStart, end: newEnd } });
+      } else {
+        const newStart = Math.max(0, origStart + dx);
+        dispatch({ type: 'SET_LOOP_RANGE', payload: { start: newStart, end: newStart + origDuration } });
+      }
+    };
+
+    const onMouseUp = () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  }, [zoom, loopStart, loopEnd, dispatch]);
 
   const handleRulerClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -211,6 +257,20 @@ export default function Timeline() {
     handleDeleteSelection({ trackId, clipId });
   }, [handleDeleteSelection]);
 
+  // Split a single clip at the current playhead position.
+  const handleSplitClip = useCallback((trackId: string, clipId: string) => {
+    dispatch({ type: 'SPLIT_CLIP', payload: { trackId, clipId, splitTime: currentTime } });
+  }, [dispatch, currentTime]);
+
+  // S-key shortcut: split all selected clips at the playhead.
+  const splitSelectedClips = useCallback(() => {
+    if (!selectedClips.length) return;
+    selectedClips.forEach(({ trackId, clipId }) => {
+      dispatch({ type: 'SPLIT_CLIP', payload: { trackId, clipId, splitTime: currentTime } });
+    });
+    setSelectedClips([]);
+  }, [dispatch, currentTime, selectedClips]);
+
   const deleteTracks = useCallback((trackIds: string[]) => {
     if (!trackIds.length) return;
     trackIds.forEach((trackId) => dispatch({ type: 'REMOVE_TRACK', payload: trackId }));
@@ -226,6 +286,14 @@ export default function Timeline() {
     if (!targets.length) return;
     deleteTracks(targets);
   }, [deleteTracks, selectedTrackIds]);
+
+  const handleMoveTrack = useCallback((trackId: string, direction: -1 | 1) => {
+    const fromIndex = tracks.findIndex((track) => track.id === trackId);
+    if (fromIndex < 0) return;
+    const toIndex = fromIndex + direction;
+    if (toIndex < 0 || toIndex >= tracks.length) return;
+    dispatch({ type: 'MOVE_TRACK', payload: { fromIndex, toIndex } });
+  }, [dispatch, tracks]);
 
   const handleTrackHeaderClick = useCallback((trackId: string, event: React.MouseEvent<HTMLDivElement>) => {
     event.stopPropagation();
@@ -292,6 +360,12 @@ export default function Timeline() {
         return;
       }
 
+      if (event.key.toLowerCase() === 's' && !event.metaKey && !event.ctrlKey && selectedClips.length > 0) {
+        event.preventDefault();
+        splitSelectedClips();
+        return;
+      }
+
       if ((event.key === 'Delete' || event.key === 'Backspace') && selectedClips.length > 0) {
         event.preventDefault();
         deleteClipRefs(selectedClips);
@@ -306,10 +380,15 @@ export default function Timeline() {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [deleteClipRefs, deleteTracks, selectAllClips, selectedClips, selectedTrackIds]);
+  }, [deleteClipRefs, deleteTracks, selectAllClips, selectedClips, selectedTrackIds, splitSelectedClips]);
 
   const contentWidth = Math.max(containerWidth, state.viewDuration * zoom);
   const playheadLeft = currentTime * zoom - scrollLeft;
+
+  // Loop region pixel coordinates (relative to visible ruler area)
+  const loopStartPx = loopStart * zoom - scrollLeft;
+  const loopEndPx = loopEnd * zoom - scrollLeft;
+  const loopWidthPx = loopEndPx - loopStartPx;
   const selectedTrack = tracks.find(track => track.id === selectedTrackId) ?? null;
   const selectedMidiClip = useMemo(() => {
     if (selectedClips.length !== 1) return null;
@@ -400,6 +479,24 @@ export default function Timeline() {
         >
           <TimeRuler zoom={zoom} scrollLeft={scrollLeft} bpm={bpm} timeSignature={timeSignature} width={containerWidth} />
 
+          {/* Loop region band on the ruler */}
+          {loopWidthPx > 0 && (
+            <div
+              className={`loop-region${loopEnabled ? ' loop-region--active' : ''}`}
+              style={{ left: loopStartPx, width: Math.max(4, loopWidthPx) }}
+              onMouseDown={e => startLoopDrag(e, 'body')}
+            >
+              <div
+                className="loop-region-handle loop-region-handle--start"
+                onMouseDown={e => startLoopDrag(e, 'start')}
+              />
+              <div
+                className="loop-region-handle loop-region-handle--end"
+                onMouseDown={e => startLoopDrag(e, 'end')}
+              />
+            </div>
+          )}
+
           {playheadLeft >= 0 && playheadLeft <= containerWidth && (
             <div
               className="playhead-ruler-triangle"
@@ -419,7 +516,14 @@ export default function Timeline() {
           style={{ width: '100%' }}
         >
           <div className="tracks-canvas" style={{ width: HEADER_W + contentWidth, position: 'relative' }}>
-            {tracks.map(track => (
+            {/* Loop region column overlay spanning all tracks */}
+            {loopWidthPx > 0 && (
+              <div
+                className={`loop-region-column${loopEnabled ? ' loop-region-column--active' : ''}`}
+                style={{ left: HEADER_W + loopStartPx, width: Math.max(4, loopWidthPx) }}
+              />
+            )}
+            {tracks.map((track, index) => (
               <TrackRow
                 key={track.id}
                 track={track}
@@ -428,16 +532,21 @@ export default function Timeline() {
                 isRecording={isRecording}
                 selected={selectedTrackIds.includes(track.id)}
                 bpm={bpm}
+                snapEnabled={snapEnabled}
                 selectedClipIds={selectedClipIdsByTrack.get(track.id) ?? EMPTY_CLIP_SET}
                 selectedCount={selectedClips.length}
                 onTrackHeaderClick={handleTrackHeaderClick}
                 onTrackHeaderContextMenu={handleTrackHeaderContextMenu}
                 onDeleteTrack={handleDeleteTrackButton}
+                onMoveTrack={handleMoveTrack}
+                canMoveUp={index > 0}
+                canMoveDown={index < tracks.length - 1}
                 onSelectClip={handleSelectClip}
                 onClearClipSelection={clearClipSelection}
                 onClipMove={handleClipMove}
                 onClipResize={handleClipResize}
                 onClipDelete={handleClipDelete}
+                onClipSplit={handleSplitClip}
                 onSetTime={t => dispatch({ type: 'SET_CURRENT_TIME', payload: t })}
                 contentWidth={contentWidth}
                 analyser={analyserNode}

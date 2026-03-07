@@ -113,6 +113,13 @@ export interface PluginInstance {
   parameters: Record<string, number>;
 }
 
+export interface PluginPreset {
+  id: string;
+  name: string;
+  pluginType: PluginType;
+  parameters: Record<string, number>;
+}
+
 // ─── Track ─────────────────────────────────────────────────────────────────────
 
 export interface Track {
@@ -191,6 +198,7 @@ export interface DAWState {
 
   // Master bus
   masterPlugins: PluginInstance[];
+  pluginPresets: Partial<Record<PluginType, PluginPreset[]>>;
   loudnessPreset: LoudnessPreset | null;
 
   // AI
@@ -214,6 +222,7 @@ export type DAWAction =
   | { type: 'TOGGLE_AUTO_SCROLL' }
   | { type: 'ADD_TRACK'; payload: TrackType }
   | { type: 'ADD_TRACK_WITH_DATA'; payload: Track }
+  | { type: 'MOVE_TRACK'; payload: { fromIndex: number; toIndex: number } }
   | { type: 'REMOVE_TRACK'; payload: string }
   | { type: 'UPDATE_TRACK'; payload: { id: string; updates: Partial<Track> } }
   | { type: 'ARM_TRACK'; payload: { id: string; armed: boolean } }
@@ -237,6 +246,10 @@ export type DAWAction =
   | { type: 'ADD_PLUGIN'; payload: { trackId: string; plugin: PluginInstance } }
   | { type: 'REMOVE_PLUGIN'; payload: { trackId: string; pluginId: string } }
   | { type: 'UPDATE_PLUGIN'; payload: { trackId: string; pluginId: string; updates: Partial<PluginInstance> } }
+  | { type: 'REORDER_PLUGIN'; payload: { trackId: string; fromIndex: number; toIndex: number } }
+  | { type: 'SAVE_PLUGIN_PRESET'; payload: { pluginType: PluginType; name: string; parameters: Record<string, number> } }
+  | { type: 'DELETE_PLUGIN_PRESET'; payload: { pluginType: PluginType; presetId: string } }
+  | { type: 'REORDER_MASTER_PLUGIN'; payload: { fromIndex: number; toIndex: number } }
   | { type: 'UPDATE_AI_CONFIG'; payload: Partial<AIConfig> }
   | { type: 'TOGGLE_INSTRUMENT'; payload: Instrument }
   | { type: 'SET_PROJECT_NAME'; payload: string }
@@ -247,4 +260,5 @@ export type DAWAction =
   | { type: 'REMOVE_MASTER_PLUGIN'; payload: string }
   | { type: 'UPDATE_MASTER_PLUGIN'; payload: { pluginId: string; updates: Partial<PluginInstance> } }
   | { type: 'APPLY_LOUDNESS_PRESET'; payload: { preset: LoudnessPreset; compressor: PluginInstance; limiter: PluginInstance } }
-  | { type: 'CLEAR_LOUDNESS_PRESET' };
+  | { type: 'CLEAR_LOUDNESS_PRESET' }
+  | { type: 'SPLIT_CLIP'; payload: { trackId: string; clipId: string; splitTime: number } };

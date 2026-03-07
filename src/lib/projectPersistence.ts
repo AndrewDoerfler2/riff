@@ -4,6 +4,7 @@ import type {
   AudioClip,
   VideoClip,
   PluginInstance,
+  PluginType,
   DrumHitEvent,
   NoteEvent,
 } from '../types/daw';
@@ -165,6 +166,12 @@ export interface RiffProjectFile {
   preRollBars?: number;
   overdubEnabled?: boolean;
   masterVolume: number; masterPan: number;
+  pluginPresets?: Partial<Record<PluginType, Array<{
+    id: string;
+    name: string;
+    pluginType: PluginType;
+    parameters: Record<string, number>;
+  }>>>;
   zoom: number;
   aiConfig: {
     genre: string; bpm: number; key: string; timeSignature: string;
@@ -188,6 +195,7 @@ function serializeProject(state: DAWState, includeAudio: boolean): RiffProjectFi
     preRollBars: state.preRollBars,
     overdubEnabled: state.overdubEnabled,
     masterVolume: state.masterVolume, masterPan: state.masterPan,
+    pluginPresets: state.pluginPresets,
     zoom: state.zoom,
     aiConfig: {
       genre: state.aiConfig.genre,
@@ -274,6 +282,7 @@ async function hydrateProject(
     preRollBars: Math.max(0, Math.min(4, Math.round(file.preRollBars ?? 0))),
     overdubEnabled: file.overdubEnabled ?? true,
     masterVolume: file.masterVolume, masterPan: file.masterPan,
+    pluginPresets: file.pluginPresets ?? {},
     zoom: file.zoom,
     aiConfig: {
       genre: file.aiConfig.genre as DAWState['aiConfig']['genre'],

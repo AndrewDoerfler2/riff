@@ -4,7 +4,7 @@ import type { AudioClip, ChordQuality, Instrument, NoteEvent, Track } from '../t
 import { renderInstrumentPlan, instrumentColor } from '../lib/backingTrackRenderer';
 import type { BackingTrackRequest, InstrumentPlan } from '../lib/backingTrackRenderer';
 import { INSTRUMENTS } from './aiPanelUtils';
-import { computePeaks } from '../lib/audioUtils';
+import { computePeaksAsync } from '../lib/audioUtils';
 
 interface MidiClipEditorProps {
   track: Track;
@@ -214,7 +214,7 @@ export default function MidiClipEditor({ track, clip, bpm, onClose }: MidiClipEd
           updates: {
             audioBuffer: buffer,
             duration: buffer.duration,
-            waveformPeaks: computePeaks(buffer, 200),
+            waveformPeaks: await computePeaksAsync(buffer, 200),
             color: newColor,
             aiLink: targetClip.aiLink ? { ...targetClip.aiLink } : undefined,
           },

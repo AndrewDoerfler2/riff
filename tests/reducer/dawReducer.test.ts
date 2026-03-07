@@ -18,6 +18,15 @@ function makeState(overrides?: Partial<DAWState>): DAWState {
       ...plugin,
       parameters: { ...plugin.parameters },
     })),
+    pluginPresets: Object.fromEntries(
+      Object.entries(initialDAWState.pluginPresets).map(([type, presets]) => [
+        type,
+        (presets ?? []).map((preset) => ({
+          ...preset,
+          parameters: { ...preset.parameters },
+        })),
+      ]),
+    ),
     aiConfig: {
       ...initialDAWState.aiConfig,
       instruments: [...initialDAWState.aiConfig.instruments],
@@ -31,6 +40,7 @@ function makeState(overrides?: Partial<DAWState>): DAWState {
     ...overrides,
     tracks: overrides.tracks ?? clone.tracks,
     masterPlugins: overrides.masterPlugins ?? clone.masterPlugins,
+    pluginPresets: overrides.pluginPresets ?? clone.pluginPresets,
     aiConfig: overrides.aiConfig ? { ...clone.aiConfig, ...overrides.aiConfig } : clone.aiConfig,
   };
 }
@@ -177,6 +187,43 @@ describe('dawReducer', () => {
 
     const removed = dawReducer(updated, { type: 'REMOVE_MASTER_PLUGIN', payload: plugin.id });
     expect(removed.masterPlugins).toHaveLength(0);
+  });
+
+  it('saves, overwrites, and deletes custom plugin presets by type', () => {
+    const base = makeState();
+    const saved = dawReducer(base, {
+      type: 'SAVE_PLUGIN_PRESET',
+      payload: {
+        pluginType: 'compressor',
+        name: 'Vox Chain',
+        parameters: { threshold: -16, ratio: 3 },
+      },
+    });
+
+    expect(saved.pluginPresets.compressor).toHaveLength(1);
+    expect(saved.pluginPresets.compressor?.[0].name).toBe('Vox Chain');
+    expect(saved.pluginPresets.compressor?.[0].parameters.threshold).toBe(-16);
+
+    const overwritten = dawReducer(saved, {
+      type: 'SAVE_PLUGIN_PRESET',
+      payload: {
+        pluginType: 'compressor',
+        name: 'vox chain',
+        parameters: { threshold: -21, ratio: 4.5 },
+      },
+    });
+
+    expect(overwritten.pluginPresets.compressor).toHaveLength(1);
+    expect(overwritten.pluginPresets.compressor?.[0].parameters.threshold).toBe(-21);
+
+    const presetId = overwritten.pluginPresets.compressor?.[0].id;
+    expect(presetId).toBeTruthy();
+    const deleted = dawReducer(overwritten, {
+      type: 'DELETE_PLUGIN_PRESET',
+      payload: { pluginType: 'compressor', presetId: presetId! },
+    });
+
+    expect(deleted.pluginPresets.compressor).toHaveLength(0);
   });
 });
 
@@ -338,6 +385,23 @@ describe('Track: arm / mute / solo / select / remove', () => {
     expect(s.tracks).toHaveLength(base.tracks.length - 1);
     expect(s.tracks.find(t => t.id === target.id)).toBeUndefined();
     expect(s.tracks.find(t => t.id === base.tracks[0].id)).toBeDefined();
+  });
+
+  it('MOVE_TRACK reorders track positions', () => {
+    const base = makeState();
+    const originalIds = base.tracks.map((track) => track.id);
+    const moved = dawReducer(base, { type: 'MOVE_TRACK', payload: { fromIndex: 0, toIndex: 2 } });
+    const movedIds = moved.tracks.map((track) => track.id);
+
+    expect(movedIds[0]).toBe(originalIds[1]);
+    expect(movedIds[1]).toBe(originalIds[2]);
+    expect(movedIds[2]).toBe(originalIds[0]);
+  });
+
+  it('MOVE_TRACK returns original state when source and destination resolve to same index', () => {
+    const base = makeState();
+    const moved = dawReducer(base, { type: 'MOVE_TRACK', payload: { fromIndex: -50, toIndex: -1 } });
+    expect(moved).toBe(base);
   });
 
   it('ADD_TRACK_WITH_DATA inserts a pre-built track', () => {
@@ -753,5 +817,90 @@ describe('Immutability', () => {
     // @ts-expect-error intentionally sending unknown action to hit default
     const next = dawReducer(base, { type: 'UNKNOWN_ACTION' });
     expect(next).toBe(base);
+  });
+
+  describe('REORDER_PLUGIN', () => {
+    function makeStateWithPlugins() {
+      const base = makeState();
+      const trackId = base.tracks[0].id;
+      const eq = makePlugin('eq');
+      const comp = makePlugin('compressor');
+      const reverb = makePlugin('reverb');
+      const s1 = dawReducer(base, { type: 'ADD_PLUGIN', payload: { trackId, plugin: eq } });
+      const s2 = dawReducer(s1, { type: 'ADD_PLUGIN', payload: { trackId, plugin: comp } });
+      const s3 = dawReducer(s2, { type: 'ADD_PLUGIN', payload: { trackId, plugin: reverb } });
+      return { state: s3, trackId, ids: [eq.id, comp.id, reverb.id] };
+    }
+
+    it('moves a plugin up in the signal chain', () => {
+      const { state, trackId, ids } = makeStateWithPlugins();
+      // Move compressor (index 1) up to index 0
+      const next = dawReducer(state, {
+        type: 'REORDER_PLUGIN',
+        payload: { trackId, fromIndex: 1, toIndex: 0 },
+      });
+      const pluginIds = next.tracks[0].plugins.map(p => p.id);
+      expect(pluginIds).toEqual([ids[1], ids[0], ids[2]]);
+    });
+
+    it('moves a plugin down in the signal chain', () => {
+      const { state, trackId, ids } = makeStateWithPlugins();
+      // Move EQ (index 0) down to index 2
+      const next = dawReducer(state, {
+        type: 'REORDER_PLUGIN',
+        payload: { trackId, fromIndex: 0, toIndex: 2 },
+      });
+      const pluginIds = next.tracks[0].plugins.map(p => p.id);
+      expect(pluginIds).toEqual([ids[1], ids[2], ids[0]]);
+    });
+
+    it('is a no-op when fromIndex equals toIndex', () => {
+      const { state, trackId } = makeStateWithPlugins();
+      const next = dawReducer(state, {
+        type: 'REORDER_PLUGIN',
+        payload: { trackId, fromIndex: 1, toIndex: 1 },
+      });
+      expect(next).toBe(state);
+    });
+
+    it('does not affect other tracks', () => {
+      const { state, trackId, ids } = makeStateWithPlugins();
+      const otherTrack = state.tracks[1];
+      const next = dawReducer(state, {
+        type: 'REORDER_PLUGIN',
+        payload: { trackId, fromIndex: 0, toIndex: 1 },
+      });
+      expect(next.tracks.find(t => t.id === otherTrack.id)).toBe(otherTrack);
+      expect(next.tracks[0].plugins.map(p => p.id)).toEqual([ids[1], ids[0], ids[2]]);
+    });
+  });
+
+  describe('REORDER_MASTER_PLUGIN', () => {
+    function makeStateWithMasterPlugins() {
+      const base = makeState();
+      const limiter = makePlugin('limiter');
+      const gain = makePlugin('gain');
+      const s1 = dawReducer(base, { type: 'ADD_MASTER_PLUGIN', payload: limiter });
+      const s2 = dawReducer(s1, { type: 'ADD_MASTER_PLUGIN', payload: gain });
+      return { state: s2, ids: [limiter.id, gain.id] };
+    }
+
+    it('reorders master plugins', () => {
+      const { state, ids } = makeStateWithMasterPlugins();
+      const next = dawReducer(state, {
+        type: 'REORDER_MASTER_PLUGIN',
+        payload: { fromIndex: 1, toIndex: 0 },
+      });
+      expect(next.masterPlugins.map(p => p.id)).toEqual([ids[1], ids[0]]);
+    });
+
+    it('is a no-op when fromIndex equals toIndex', () => {
+      const { state } = makeStateWithMasterPlugins();
+      const next = dawReducer(state, {
+        type: 'REORDER_MASTER_PLUGIN',
+        payload: { fromIndex: 0, toIndex: 0 },
+      });
+      expect(next).toBe(state);
+    });
   });
 });

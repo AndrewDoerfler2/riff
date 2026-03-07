@@ -29,10 +29,19 @@ Riff currently supports:
 - Transport now includes a live input level meter while in record-ready mode and during active recording.
 - Transport now supports recording pre-roll/count-in (off/1 bar/2 bars) with countdown, click accents, and persisted project setting.
 - Transport now includes an Overdub mode toggle, with persisted state and non-overdub record behavior that suppresses existing armed-track clip playback.
+- Clip split implemented: `SPLIT_CLIP` reducer action splits a clip at any time point, partitioning audio offset/duration and MIDI notes correctly. `S` key splits selected clips at the playhead; ✂ Split button appears on selected clips.
+- Waveform peak extraction now runs via a dedicated worker path (with sync fallback), covering file import, recording captures, AI take insertion, and MIDI-to-audio re-renders.
+- Loop region is now rendered as a draggable band on the ruler (left/right handles resize, center drag moves). A matching column overlay is shown across the tracks area. Both reflect enabled/disabled state visually.
+- Timeline clip move/trim now supports beat snapping when Snap is enabled (drag, left trim, and right trim all quantize to nearest beat).
+- Clip fades implemented: draggable fade-in (top-left) and fade-out (top-right) handles on every clip; SVG gradient overlay visualizes fade shape; fades applied as Web Audio gain ramps during playback and offline bounce.
+- Timeline track headers now support reordering with up/down controls, updating render/mixer order through reducer-managed track moves.
+- Plugin chain moved to track-bus level: insert, bypass, and reorder all take effect live during playback. `REORDER_PLUGIN` / `REORDER_MASTER_PLUGIN` reducer actions added; ▲/▼ buttons added to plugin slots in the rack.
+- Plugin rack now supports user plugin presets per plugin type: save current parameters with a custom name, load/delete saved presets, and persist them in local project save plus `.riff` export/import.
 
 ## Next Focus
 
-- Timeline editing improvements: split, loop drag, beat snapping, crossfades, track reorder
+- Plugin presets (save/load named parameter snapshots per plugin type)
+- Automation lanes (plugin/track parameter automation drawn on timeline)
 
 ---
 
@@ -96,18 +105,18 @@ Riff currently supports:
 - [x] Input level meter
 - [x] Count-in / pre-roll
 - [x] Overdub mode
-- [ ] Worker/off-main-thread waveform generation
+- [x] Worker/off-main-thread waveform generation
 
 ### Timeline Improvements
-- [ ] Clip split
-- [ ] Loop region drag
-- [ ] Beat snap for drag/trim
-- [ ] Crossfades / clip fades UI
-- [ ] Track reordering
+- [x] Clip split
+- [x] Loop region drag
+- [x] Beat snap for drag/trim
+- [x] Crossfades / clip fades UI
+- [x] Track reordering
 
 ### Plugin System
-- [ ] True live insert/bypass/reorder
-- [ ] Plugin presets
+- [x] True live insert/bypass/reorder
+- [x] Plugin presets
 - [ ] Automation lanes
 - [ ] Plugin CPU / latency display
 
@@ -163,7 +172,7 @@ Riff currently supports:
 
 ## Notes for Automated Runs
 
-- `completedCount`: 48
+- `completedCount`: 54
 - Project path: `/Users/andrewdoerfler/Projects/Riff/riff`
 - TypeScript check: run `npx tsc -p tsconfig.app.json --noEmit`
 - Testing: run relevant Vitest scope when applicable and document pass/fail

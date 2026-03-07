@@ -192,8 +192,14 @@ const PLUGIN_EDITOR_CONFIGS: Partial<Record<PluginType, PluginEditorConfig>> = {
 };
 
 function PluginEditor({ plugin, trackId }: { plugin: PluginInstance; trackId: string }) {
-  const { dispatch } = useDAW();
+  const { state, dispatch } = useDAW();
   const def = PLUGIN_DEFINITIONS[plugin.type];
+  const [customPresetName, setCustomPresetName] = useState('');
+  const customPresets = state.pluginPresets[plugin.type] ?? [];
+
+  useEffect(() => {
+    setCustomPresetName('');
+  }, [plugin.id, plugin.type]);
 
   const updatePlugin = useCallback((updates: Partial<PluginInstance>) => {
     dispatch({
@@ -213,6 +219,27 @@ function PluginEditor({ plugin, trackId }: { plugin: PluginInstance; trackId: st
   const applyPreset = useCallback((values: Record<string, number>) => {
     updatePlugin({ parameters: { ...plugin.parameters, ...values } });
   }, [plugin.parameters, updatePlugin]);
+
+  const saveCustomPreset = useCallback(() => {
+    const normalizedName = customPresetName.trim();
+    if (!normalizedName) return;
+    dispatch({
+      type: 'SAVE_PLUGIN_PRESET',
+      payload: {
+        pluginType: plugin.type,
+        name: normalizedName,
+        parameters: { ...plugin.parameters },
+      },
+    });
+    setCustomPresetName('');
+  }, [customPresetName, dispatch, plugin.parameters, plugin.type]);
+
+  const deleteCustomPreset = useCallback((presetId: string) => {
+    dispatch({
+      type: 'DELETE_PLUGIN_PRESET',
+      payload: { pluginType: plugin.type, presetId },
+    });
+  }, [dispatch, plugin.type]);
 
   const renderParameter = useCallback((paramId: string) => {
     const range = PARAM_RANGES[paramId] ?? { min: 0, max: 1, unit: '' };
@@ -294,27 +321,86 @@ function PluginEditor({ plugin, trackId }: { plugin: PluginInstance; trackId: st
       </div>
 
       {renderPluginSpecificEditor()}
+
+      <div className="plugin-editor-section">
+        <div className="plugin-editor-label">Saved Presets</div>
+        <div className="plugin-custom-preset-save">
+          <input
+            className="plugin-custom-preset-input"
+            value={customPresetName}
+            onChange={(event) => setCustomPresetName(event.target.value)}
+            placeholder={`Save ${def.name} preset`}
+            maxLength={40}
+          />
+          <button
+            className="plugin-custom-preset-save-btn"
+            onClick={saveCustomPreset}
+            disabled={!customPresetName.trim()}
+          >
+            Save Current
+          </button>
+        </div>
+        {customPresets.length === 0 ? (
+          <div className="plugin-custom-presets-empty">
+            No saved presets yet
+          </div>
+        ) : (
+          <div className="plugin-custom-presets-list">
+            {customPresets.map((preset) => (
+              <div key={preset.id} className="plugin-custom-preset-item">
+                <span className="plugin-custom-preset-name">{preset.name}</span>
+                <div className="plugin-custom-preset-actions">
+                  <button className="plugin-custom-preset-load-btn" onClick={() => applyPreset(preset.parameters)}>
+                    Load
+                  </button>
+                  <button className="plugin-custom-preset-delete-btn" onClick={() => deleteCustomPreset(preset.id)}>
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
-function PluginSlot({ plugin, active, onSelect, onRemove, onToggle }: {
+function PluginSlot({ plugin, active, index, total, onSelect, onRemove, onToggle, onMoveUp, onMoveDown }: {
   plugin: PluginInstance;
   active: boolean;
+  index: number;
+  total: number;
   onSelect: () => void;
   onRemove: () => void;
   onToggle: () => void;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
 }) {
   const def = PLUGIN_DEFINITIONS[plugin.type];
 
   return (
     <div className={`plugin-slot ${plugin.enabled ? 'enabled' : 'disabled'} ${active ? 'plugin-slot-active' : ''}`}>
       <div className="plugin-header" onClick={onSelect}>
+        <div className="plugin-reorder-btns">
+          <button
+            className="plugin-reorder-btn"
+            onClick={e => { e.stopPropagation(); onMoveUp(); }}
+            disabled={index === 0}
+            title="Move up in signal chain"
+          >▲</button>
+          <button
+            className="plugin-reorder-btn"
+            onClick={e => { e.stopPropagation(); onMoveDown(); }}
+            disabled={index === total - 1}
+            title="Move down in signal chain"
+          >▼</button>
+        </div>
         <div className="plugin-color-dot" style={{ background: def.color }} />
         <button
           className={`plugin-power ${plugin.enabled ? 'on' : 'off'}`}
           onClick={e => { e.stopPropagation(); onToggle(); }}
-          title={plugin.enabled ? 'Disable' : 'Enable'}
+          title={plugin.enabled ? 'Bypass' : 'Enable'}
         >
           ⏻
         </button>
@@ -381,6 +467,14 @@ export default function PluginRack() {
     });
   }, [pluginRackTrackId, dispatch]);
 
+  const movePlugin = useCallback((fromIndex: number, toIndex: number) => {
+    if (!pluginRackTrackId) return;
+    dispatch({
+      type: 'REORDER_PLUGIN',
+      payload: { trackId: pluginRackTrackId, fromIndex, toIndex },
+    });
+  }, [pluginRackTrackId, dispatch]);
+
   if (!track) {
     return (
       <div className="plugin-rack empty-rack">
@@ -441,14 +535,18 @@ export default function PluginRack() {
               <p>Click <strong>+ Add Plugin</strong> to insert effects</p>
             </div>
           ) : (
-            track.plugins.map(plugin => (
+            track.plugins.map((plugin, idx) => (
               <PluginSlot
                 key={plugin.id}
                 plugin={plugin}
                 active={selectedPlugin?.id === plugin.id}
+                index={idx}
+                total={track.plugins.length}
                 onSelect={() => setSelectedPluginId(plugin.id)}
                 onRemove={() => removePlugin(plugin.id)}
                 onToggle={() => togglePlugin(plugin)}
+                onMoveUp={() => movePlugin(idx, idx - 1)}
+                onMoveDown={() => movePlugin(idx, idx + 1)}
               />
             ))
           )}

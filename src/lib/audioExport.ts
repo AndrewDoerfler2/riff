@@ -156,12 +156,31 @@ async function renderTracksToBuffer(state: DAWState, tracks: Track[]): Promise<{
       source.buffer = clip.audioBuffer;
 
       const clipGain = ctx.createGain();
-      clipGain.gain.value = clip.gain;
 
       const pluginOut = buildClipPluginChain(nodeContext, track.plugins, bus.sumInput);
       source.connect(clipGain);
       clipGain.connect(pluginOut.input);
-      source.start(Math.max(0, clip.startTime), sourceOffset, playbackDuration);
+
+      // Apply clip fade-in / fade-out automation
+      const fadeIn = clip.fadeIn ?? 0;
+      const fadeOut = clip.fadeOut ?? 0;
+      const baseGain = clip.gain;
+      const startWhen = Math.max(0, clip.startTime);
+      if (fadeIn > 0 || fadeOut > 0) {
+        clipGain.gain.setValueAtTime(fadeIn > 0 ? 0 : baseGain, startWhen);
+        if (fadeIn > 0) {
+          clipGain.gain.linearRampToValueAtTime(baseGain, startWhen + fadeIn);
+        }
+        if (fadeOut > 0) {
+          const fadeOutStart = startWhen + playbackDuration - fadeOut;
+          clipGain.gain.setValueAtTime(baseGain, Math.max(startWhen, fadeOutStart));
+          clipGain.gain.linearRampToValueAtTime(0, startWhen + playbackDuration);
+        }
+      } else {
+        clipGain.gain.value = baseGain;
+      }
+
+      source.start(startWhen, sourceOffset, playbackDuration);
       source.onended = () => {
         try { source.disconnect(); } catch {}
         try { clipGain.disconnect(); } catch {}

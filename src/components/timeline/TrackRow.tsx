@@ -14,25 +14,30 @@ export interface TrackRowProps {
   isRecording: boolean;
   selected: boolean;
   bpm: number;
+  snapEnabled: boolean;
   selectedClipIds: Set<string>;
   selectedCount: number;
   onTrackHeaderClick: (trackId: string, event: React.MouseEvent<HTMLDivElement>) => void;
   onTrackHeaderContextMenu: (trackId: string, event: React.MouseEvent<HTMLDivElement>) => void;
   onDeleteTrack: (trackId: string) => void;
+  onMoveTrack: (trackId: string, direction: -1 | 1) => void;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
   onSelectClip: (trackId: string, clipId: string, additive: boolean) => void;
   onClearClipSelection: () => void;
   onClipMove: (trackId: string, clipId: string, newStart: number) => void;
   onClipResize: (trackId: string, clipId: string, updates: Partial<AudioClip>) => void;
   onClipDelete: (trackId: string, clipId: string) => void;
+  onClipSplit?: (trackId: string, clipId: string) => void;
   onSetTime: (time: number) => void;
   contentWidth: number;
   analyser: AnalyserNode | null;
 }
 
 export const TrackRow = memo(function TrackRow({
-  track, zoom, scrollLeft, isRecording, selected, bpm, selectedClipIds, selectedCount,
-  onTrackHeaderClick, onTrackHeaderContextMenu, onDeleteTrack,
-  onSelectClip, onClearClipSelection, onClipMove, onClipResize, onClipDelete, onSetTime,
+  track, zoom, scrollLeft, isRecording, selected, bpm, snapEnabled, selectedClipIds, selectedCount,
+  onTrackHeaderClick, onTrackHeaderContextMenu, onDeleteTrack, onMoveTrack, canMoveUp, canMoveDown,
+  onSelectClip, onClearClipSelection, onClipMove, onClipResize, onClipDelete, onClipSplit, onSetTime,
   contentWidth, analyser,
 }: TrackRowProps) {
   const { dispatch } = useDAW();
@@ -142,6 +147,18 @@ export const TrackRow = memo(function TrackRow({
 
         <div className="track-actions-row">
           <button
+            className="trk-btn-sm reorder-btn"
+            title="Move track up"
+            disabled={!canMoveUp}
+            onClick={e => { e.stopPropagation(); onMoveTrack(track.id, -1); }}
+          >↑</button>
+          <button
+            className="trk-btn-sm reorder-btn"
+            title="Move track down"
+            disabled={!canMoveDown}
+            onClick={e => { e.stopPropagation(); onMoveTrack(track.id, 1); }}
+          >↓</button>
+          <button
             className="trk-btn-sm"
             title="Plugins"
             onClick={e => { e.stopPropagation(); dispatch({ type: 'SET_PLUGIN_RACK_TRACK', payload: track.id }); }}
@@ -203,12 +220,15 @@ export const TrackRow = memo(function TrackRow({
             clip={clip}
             track={track}
             zoom={zoom}
+            bpm={bpm}
+            snapEnabled={snapEnabled}
             selected={selectedClipIds.has(clip.id)}
             selectedCount={selectedCount}
             onSelect={(clipId, additive) => onSelectClip(track.id, clipId, additive)}
             onMove={(clipId, newStart) => onClipMove(track.id, clipId, newStart)}
             onResize={(clipId, updates) => onClipResize(track.id, clipId, updates)}
             onDelete={(clipId) => onClipDelete(track.id, clipId)}
+            onSplit={onClipSplit ? (clipId) => onClipSplit(track.id, clipId) : undefined}
           />
         ))}
 

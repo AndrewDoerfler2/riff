@@ -300,6 +300,7 @@ export const initialDAWState: DAWState = {
   masterVolume: 0.85,
   masterPan: 0,
   masterPlugins: [],
+  pluginPresets: {},
   loudnessPreset: null,
 
   zoom: 100,
@@ -355,6 +356,18 @@ export function dawReducer(state: DAWState, action: DAWAction): DAWState {
 
     case 'ADD_TRACK_WITH_DATA':
       return { ...state, tracks: [...state.tracks, action.payload] };
+
+    case 'MOVE_TRACK': {
+      const total = state.tracks.length;
+      if (total < 2) return state;
+      const fromIndex = Math.max(0, Math.min(total - 1, Math.round(action.payload.fromIndex)));
+      const toIndex = Math.max(0, Math.min(total - 1, Math.round(action.payload.toIndex)));
+      if (fromIndex === toIndex) return state;
+      const nextTracks = [...state.tracks];
+      const [moved] = nextTracks.splice(fromIndex, 1);
+      nextTracks.splice(toIndex, 0, moved);
+      return { ...state, tracks: nextTracks };
+    }
 
     case 'REMOVE_TRACK':
       return { ...state, tracks: state.tracks.filter(t => t.id !== action.payload) };
@@ -536,6 +549,78 @@ export function dawReducer(state: DAWState, action: DAWAction): DAWState {
         )),
       };
 
+    case 'REORDER_PLUGIN': {
+      const { trackId, fromIndex, toIndex } = action.payload;
+      const targetTrack = state.tracks.find(t => t.id === trackId);
+      if (!targetTrack) return state;
+      const total = targetTrack.plugins.length;
+      const from = Math.max(0, Math.min(total - 1, fromIndex));
+      const to = Math.max(0, Math.min(total - 1, toIndex));
+      if (from === to) return state;
+      const plugins = [...targetTrack.plugins];
+      const [moved] = plugins.splice(from, 1);
+      plugins.splice(to, 0, moved);
+      return {
+        ...state,
+        tracks: state.tracks.map(t => (t.id === trackId ? { ...t, plugins } : t)),
+      };
+    }
+
+    case 'SAVE_PLUGIN_PRESET': {
+      const { pluginType, name, parameters } = action.payload;
+      const normalizedName = name.trim();
+      if (!normalizedName) return state;
+
+      const existing = state.pluginPresets[pluginType] ?? [];
+      const existingIndex = existing.findIndex(
+        preset => preset.name.toLowerCase() === normalizedName.toLowerCase(),
+      );
+      const nextPreset = {
+        id: existingIndex >= 0 ? existing[existingIndex].id : genId(),
+        name: normalizedName,
+        pluginType,
+        parameters: { ...parameters },
+      };
+      const nextPresets = existingIndex >= 0
+        ? existing.map((preset, index) => (index === existingIndex ? nextPreset : preset))
+        : [...existing, nextPreset];
+
+      return {
+        ...state,
+        pluginPresets: {
+          ...state.pluginPresets,
+          [pluginType]: nextPresets,
+        },
+      };
+    }
+
+    case 'DELETE_PLUGIN_PRESET': {
+      const { pluginType, presetId } = action.payload;
+      const existing = state.pluginPresets[pluginType] ?? [];
+      if (!existing.length) return state;
+      const nextPresets = existing.filter(preset => preset.id !== presetId);
+      if (nextPresets.length === existing.length) return state;
+      return {
+        ...state,
+        pluginPresets: {
+          ...state.pluginPresets,
+          [pluginType]: nextPresets,
+        },
+      };
+    }
+
+    case 'REORDER_MASTER_PLUGIN': {
+      const { fromIndex, toIndex } = action.payload;
+      const total = state.masterPlugins.length;
+      const from = Math.max(0, Math.min(total - 1, fromIndex));
+      const to = Math.max(0, Math.min(total - 1, toIndex));
+      if (from === to) return state;
+      const plugins = [...state.masterPlugins];
+      const [moved] = plugins.splice(from, 1);
+      plugins.splice(to, 0, moved);
+      return { ...state, masterPlugins: plugins };
+    }
+
     case 'UPDATE_AI_CONFIG':
       return { ...state, aiConfig: { ...state.aiConfig, ...action.payload } };
 
@@ -602,6 +687,69 @@ export function dawReducer(state: DAWState, action: DAWAction): DAWState {
           p => !p.id.startsWith('compressor-lufs-') && !p.id.startsWith('limiter-lufs-'),
         ),
       };
+
+    case 'SPLIT_CLIP': {
+      const { trackId, clipId, splitTime } = action.payload;
+      const MIN_CLIP_DURATION = 0.05;
+      return {
+        ...state,
+        tracks: state.tracks.map((track) => {
+          if (track.id !== trackId) return track;
+          const clip = track.clips.find((c) => c.id === clipId);
+          if (!clip) return track;
+
+          const clipEnd = clip.startTime + clip.duration;
+          // Guard: split point must fall strictly inside the clip with room for two viable halves
+          if (
+            splitTime <= clip.startTime + MIN_CLIP_DURATION
+            || splitTime >= clipEnd - MIN_CLIP_DURATION
+          ) {
+            return track;
+          }
+
+          const leftDuration = splitTime - clip.startTime;
+          const rightDuration = clip.duration - leftDuration;
+          const rightOffset = clip.offset + leftDuration;
+
+          // Partition MIDI notes for each half (notes use absolute beat positions)
+          let leftNotes = clip.midiNotes;
+          let rightNotes = clip.midiNotes;
+          if (clip.midiNotes?.length) {
+            const splitBeats = splitTime * (state.bpm / 60);
+            leftNotes = clip.midiNotes
+              .filter((n) => n.startBeats < splitBeats)
+              .map((n) => ({
+                ...n,
+                durationBeats: Math.min(
+                  n.durationBeats,
+                  Math.max(MIN_CLIP_DURATION, splitBeats - n.startBeats),
+                ),
+              }));
+            rightNotes = clip.midiNotes.filter((n) => n.startBeats >= splitBeats);
+          }
+
+          const leftClip = {
+            ...clip,
+            id: genId(),
+            duration: leftDuration,
+            midiNotes: leftNotes,
+          };
+          const rightClip = {
+            ...clip,
+            id: genId(),
+            startTime: splitTime,
+            duration: rightDuration,
+            offset: rightOffset,
+            midiNotes: rightNotes,
+          };
+
+          const nextClips = track.clips.flatMap((c) =>
+            c.id === clipId ? [leftClip, rightClip] : [c],
+          );
+          return { ...track, clips: nextClips };
+        }),
+      };
+    }
 
     default:
       return state;
