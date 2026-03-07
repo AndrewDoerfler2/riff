@@ -225,6 +225,59 @@ describe('dawReducer', () => {
 
     expect(deleted.pluginPresets.compressor).toHaveLength(0);
   });
+
+  it('adds and toggles automation lanes per track target without duplicates', () => {
+    const base = makeState();
+    const trackId = base.tracks[0].id;
+
+    const added = dawReducer(base, {
+      type: 'ADD_AUTOMATION_LANE',
+      payload: { trackId, target: { kind: 'trackVolume' } },
+    });
+    expect(added.tracks[0].automationLanes).toHaveLength(1);
+    expect(added.tracks[0].automationLanes[0].target).toEqual({ kind: 'trackVolume' });
+    expect(added.tracks[0].automationLaneExpanded).toBe(true);
+
+    const duplicate = dawReducer(added, {
+      type: 'ADD_AUTOMATION_LANE',
+      payload: { trackId, target: { kind: 'trackVolume' } },
+    });
+    expect(duplicate.tracks[0].automationLanes).toHaveLength(1);
+
+    const toggled = dawReducer(duplicate, {
+      type: 'TOGGLE_TRACK_AUTOMATION_LANES',
+      payload: { trackId },
+    });
+    expect(toggled.tracks[0].automationLaneExpanded).toBe(false);
+  });
+
+  it('upserts, updates, and removes automation points with range clamping', () => {
+    const base = makeState();
+    const trackId = base.tracks[0].id;
+    const withLane = dawReducer(base, {
+      type: 'ADD_AUTOMATION_LANE',
+      payload: { trackId, target: { kind: 'trackPan' } },
+    });
+    const laneId = withLane.tracks[0].automationLanes[0].id;
+
+    const withPoint = dawReducer(withLane, {
+      type: 'UPSERT_AUTOMATION_POINT',
+      payload: { trackId, laneId, time: 2.2, value: 2.5 },
+    });
+    expect(withPoint.tracks[0].automationLanes[0].points).toEqual([{ time: 2.2, value: 1 }]);
+
+    const moved = dawReducer(withPoint, {
+      type: 'UPDATE_AUTOMATION_POINT',
+      payload: { trackId, laneId, pointIndex: 0, time: 1.1, value: -2.2 },
+    });
+    expect(moved.tracks[0].automationLanes[0].points).toEqual([{ time: 1.1, value: -1 }]);
+
+    const removed = dawReducer(moved, {
+      type: 'REMOVE_AUTOMATION_POINT',
+      payload: { trackId, laneId, pointIndex: 0 },
+    });
+    expect(removed.tracks[0].automationLanes[0].points).toHaveLength(0);
+  });
 });
 
 // ─── Transport: extended coverage ─────────────────────────────────────────────

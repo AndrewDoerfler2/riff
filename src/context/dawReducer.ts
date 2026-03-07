@@ -1,6 +1,7 @@
 import type {
   DAWState, DAWAction, Track, TrackType, PluginInstance, PluginType, NoteEvent, ChordQuality,
 } from '../types/daw';
+import { normalizeAutomationPoints, automationTargetKey } from '../lib/automation';
 
 const TRACK_COLORS = [
   '#0a84ff', '#30d158', '#ff9f0a', '#ff453a', '#bf5af2',
@@ -62,6 +63,22 @@ function updateTrackClipById(
     });
     return changed ? { ...track, clips: nextClips } : track;
   });
+}
+
+function ensureUniqueAutomationLanes(track: Track): Track {
+  if (!track.automationLanes.length) return track;
+  const seen = new Set<string>();
+  const nextLanes = track.automationLanes
+    .map((lane) => normalizeAutomationPoints(lane, track))
+    .filter((lane) => {
+      const key = automationTargetKey(lane.target);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  return nextLanes.length === track.automationLanes.length
+    ? { ...track, automationLanes: nextLanes }
+    : { ...track, automationLanes: nextLanes };
 }
 
 const CHORD_ROOT_TO_SEMITONE: Record<string, number> = {
@@ -250,6 +267,8 @@ export function makeTrack(type: TrackType): Track {
     clips: [],
     videoClips: [],
     plugins: [],
+    automationLanes: [],
+    automationLaneExpanded: false,
     height: 110,
     inputMonitor: false,
     meterMode: 'post' as const,
@@ -608,6 +627,129 @@ export function dawReducer(state: DAWState, action: DAWAction): DAWState {
         },
       };
     }
+
+    case 'TOGGLE_TRACK_AUTOMATION_LANES':
+      return {
+        ...state,
+        tracks: updateTrackById(state.tracks, action.payload.trackId, (track) => ({
+          ...track,
+          automationLaneExpanded: !track.automationLaneExpanded,
+        })),
+      };
+
+    case 'ADD_AUTOMATION_LANE':
+      return {
+        ...state,
+        tracks: updateTrackById(state.tracks, action.payload.trackId, (track) => {
+          const nextKey = automationTargetKey(action.payload.target);
+          if (track.automationLanes.some((lane) => automationTargetKey(lane.target) === nextKey)) {
+            return {
+              ...track,
+              automationLaneExpanded: true,
+            };
+          }
+          const lane = normalizeAutomationPoints({
+            id: genId(),
+            target: action.payload.target,
+            points: [],
+          }, track);
+          return {
+            ...track,
+            automationLaneExpanded: true,
+            automationLanes: [...track.automationLanes, lane],
+          };
+        }),
+      };
+
+    case 'REMOVE_AUTOMATION_LANE':
+      return {
+        ...state,
+        tracks: updateTrackById(state.tracks, action.payload.trackId, (track) => {
+          const nextLanes = track.automationLanes.filter((lane) => lane.id !== action.payload.laneId);
+          return nextLanes.length === track.automationLanes.length
+            ? track
+            : { ...track, automationLanes: nextLanes };
+        }),
+      };
+
+    case 'UPDATE_AUTOMATION_POINT':
+      return {
+        ...state,
+        tracks: updateTrackById(state.tracks, action.payload.trackId, (track) => {
+          let changed = false;
+          const nextLanes = track.automationLanes.map((lane) => {
+            if (lane.id !== action.payload.laneId) return lane;
+            if (action.payload.pointIndex < 0 || action.payload.pointIndex >= lane.points.length) return lane;
+            changed = true;
+            const nextPoints = lane.points.map((point, index) => (
+              index === action.payload.pointIndex
+                ? { time: action.payload.time, value: action.payload.value }
+                : point
+            ));
+            return normalizeAutomationPoints({
+              ...lane,
+              points: nextPoints,
+            }, track);
+          });
+          if (!changed) return track;
+          return {
+            ...track,
+            automationLanes: nextLanes,
+          };
+        }),
+      };
+
+    case 'UPSERT_AUTOMATION_POINT':
+      return {
+        ...state,
+        tracks: updateTrackById(state.tracks, action.payload.trackId, (track) => {
+          let changed = false;
+          const nextLanes = track.automationLanes.map((lane) => {
+            if (lane.id !== action.payload.laneId) return lane;
+
+            const candidateIndex = lane.points.findIndex((point) => (
+              Math.abs(point.time - action.payload.time) < 0.02
+            ));
+            const nextPoints = candidateIndex >= 0
+              ? lane.points.map((point, index) => (
+                index === candidateIndex ? { time: action.payload.time, value: action.payload.value } : point
+              ))
+              : [...lane.points, { time: action.payload.time, value: action.payload.value }];
+            changed = true;
+            return normalizeAutomationPoints({
+              ...lane,
+              points: nextPoints,
+            }, track);
+          });
+          if (!changed) return track;
+          return ensureUniqueAutomationLanes({
+            ...track,
+            automationLanes: nextLanes,
+          });
+        }),
+      };
+
+    case 'REMOVE_AUTOMATION_POINT':
+      return {
+        ...state,
+        tracks: updateTrackById(state.tracks, action.payload.trackId, (track) => {
+          let changed = false;
+          const nextLanes = track.automationLanes.map((lane) => {
+            if (lane.id !== action.payload.laneId) return lane;
+            if (action.payload.pointIndex < 0 || action.payload.pointIndex >= lane.points.length) return lane;
+            changed = true;
+            return {
+              ...lane,
+              points: lane.points.filter((_, index) => index !== action.payload.pointIndex),
+            };
+          });
+          if (!changed) return track;
+          return {
+            ...track,
+            automationLanes: nextLanes,
+          };
+        }),
+      };
 
     case 'REORDER_MASTER_PLUGIN': {
       const { fromIndex, toIndex } = action.payload;

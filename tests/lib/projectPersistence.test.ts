@@ -57,6 +57,17 @@ function makeState(): DAWState {
         ...track,
         name: 'MIDI Bass',
         meterMode: 'pre',
+        automationLaneExpanded: true,
+        automationLanes: [
+          {
+            id: 'lane-1',
+            target: { kind: 'trackVolume' },
+            points: [
+              { time: 0.5, value: 0.7 },
+              { time: 1.5, value: 0.9 },
+            ],
+          },
+        ],
         clips: [
           {
             id: 'clip-persist-1',
@@ -123,6 +134,8 @@ describe('projectPersistence', () => {
     expect(loaded.preRollBars).toBe(2);
     expect(loaded.overdubEnabled).toBe(false);
     expect(loaded.pluginPresets?.eq?.[0].name).toBe('Bright Vocal');
+    expect(loaded.tracks?.[0].automationLaneExpanded).toBe(true);
+    expect(loaded.tracks?.[0].automationLanes[0].points).toHaveLength(2);
     expect(loaded.tracks).toHaveLength(1);
     const clip = loaded.tracks?.[0].clips[0];
     expect(clip?.midiNotes).toHaveLength(2);

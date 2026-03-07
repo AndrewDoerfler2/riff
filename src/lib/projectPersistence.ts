@@ -150,6 +150,8 @@ interface SerializedTrack {
   armed: boolean; muted: boolean; soloed: boolean;
   volume: number; pan: number; height: number; inputMonitor: boolean;
   meterMode?: 'pre' | 'post';
+  automationLanes?: Track['automationLanes'];
+  automationLaneExpanded?: boolean;
   plugins: PluginInstance[];
   clips: SerializedClip[];
   videoClips: SerializedVideoClip[];
@@ -212,6 +214,8 @@ function serializeProject(state: DAWState, includeAudio: boolean): RiffProjectFi
       armed: track.armed, muted: track.muted, soloed: track.soloed,
       volume: track.volume, pan: track.pan, height: track.height,
       inputMonitor: track.inputMonitor, meterMode: track.meterMode,
+      automationLanes: track.automationLanes,
+      automationLaneExpanded: track.automationLaneExpanded,
       plugins: track.plugins,
       clips: track.clips.map(clip => ({
         id: clip.id, name: clip.name, startTime: clip.startTime, duration: clip.duration,
@@ -268,6 +272,8 @@ async function hydrateProject(
         armed: st.armed, muted: st.muted, soloed: st.soloed,
         volume: st.volume, pan: st.pan, height: st.height, inputMonitor: st.inputMonitor,
         meterMode: st.meterMode ?? 'post',
+        automationLanes: st.automationLanes ?? [],
+        automationLaneExpanded: st.automationLaneExpanded ?? false,
         plugins: st.plugins, clips, videoClips,
       };
     }),

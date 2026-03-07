@@ -2,6 +2,12 @@ import React, { useEffect, useRef, useCallback } from 'react';
 import { useDAW, useAudioEngineCtx, PLUGIN_DEFINITIONS } from '../context/DAWContext';
 import type { Track, PluginType } from '../types/daw';
 import MixAssistantPanel from './MixAssistantPanel';
+import {
+  estimatePluginPerformance,
+  formatCpuPercent,
+  formatLatency,
+  sumPluginPerformance,
+} from '../lib/pluginPerformance';
 
 // ─── Meter animation constants ────────────────────────────────────────────────
 const RISE = 1.0;   // instant rise
@@ -140,6 +146,7 @@ interface MasterStripProps {
 
 function MasterStrip({ meterLRef, meterRRef }: MasterStripProps) {
   const { state, dispatch, makePlugin } = useDAW();
+  const masterPerf = sumPluginPerformance(state.masterPlugins);
 
   const addMasterPlugin = (type: PluginType) => {
     dispatch({ type: 'ADD_MASTER_PLUGIN', payload: makePlugin(type) });
@@ -185,6 +192,10 @@ function MasterStrip({ meterLRef, meterRRef }: MasterStripProps) {
       {/* Master plugin chain */}
       <div className="master-chain-area">
         <div className="master-chain-title">Master Chain</div>
+        <div className="master-chain-metrics">
+          <span>{formatCpuPercent(masterPerf.cpuPercent)}</span>
+          <span>{formatLatency(masterPerf.latencySamples)}</span>
+        </div>
         {state.masterPlugins.map(plugin => (
           <div key={plugin.id} className="master-plugin-item">
             <span
@@ -192,6 +203,9 @@ function MasterStrip({ meterLRef, meterRRef }: MasterStripProps) {
               style={{ background: PLUGIN_DEFINITIONS[plugin.type]?.color ?? '#666' }}
             />
             <span className="master-plugin-name">{plugin.name}</span>
+            <span className="master-plugin-metric">
+              {formatCpuPercent(estimatePluginPerformance(plugin).cpuPercent)}
+            </span>
             <button
               className={`master-plugin-bypass ${!plugin.enabled ? 'bypassed' : ''}`}
               title={plugin.enabled ? 'Bypass' : 'Enable'}

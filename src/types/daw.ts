@@ -120,6 +120,22 @@ export interface PluginPreset {
   parameters: Record<string, number>;
 }
 
+export interface AutomationPoint {
+  time: number;
+  value: number;
+}
+
+export type AutomationTarget =
+  | { kind: 'trackVolume' }
+  | { kind: 'trackPan' }
+  | { kind: 'pluginParam'; pluginId: string; parameterId: string };
+
+export interface AutomationLane {
+  id: string;
+  target: AutomationTarget;
+  points: AutomationPoint[];
+}
+
 // ─── Track ─────────────────────────────────────────────────────────────────────
 
 export interface Track {
@@ -135,6 +151,8 @@ export interface Track {
   clips: AudioClip[];
   videoClips: VideoClip[];
   plugins: PluginInstance[];
+  automationLanes: AutomationLane[];
+  automationLaneExpanded: boolean;
   height: number;
   inputMonitor: boolean;
   busRouteId?: string;       // undefined = route to master
@@ -208,6 +226,8 @@ export interface DAWState {
 // ─── Actions ───────────────────────────────────────────────────────────────────
 
 export type DAWAction =
+  | { type: 'UNDO' }
+  | { type: 'REDO' }
   | { type: 'SET_PLAYING'; payload: boolean }
   | { type: 'SET_RECORDING'; payload: boolean }
   | { type: 'SET_CURRENT_TIME'; payload: number }
@@ -249,6 +269,12 @@ export type DAWAction =
   | { type: 'REORDER_PLUGIN'; payload: { trackId: string; fromIndex: number; toIndex: number } }
   | { type: 'SAVE_PLUGIN_PRESET'; payload: { pluginType: PluginType; name: string; parameters: Record<string, number> } }
   | { type: 'DELETE_PLUGIN_PRESET'; payload: { pluginType: PluginType; presetId: string } }
+  | { type: 'TOGGLE_TRACK_AUTOMATION_LANES'; payload: { trackId: string } }
+  | { type: 'ADD_AUTOMATION_LANE'; payload: { trackId: string; target: AutomationTarget } }
+  | { type: 'REMOVE_AUTOMATION_LANE'; payload: { trackId: string; laneId: string } }
+  | { type: 'UPSERT_AUTOMATION_POINT'; payload: { trackId: string; laneId: string; pointId?: string; time: number; value: number } }
+  | { type: 'UPDATE_AUTOMATION_POINT'; payload: { trackId: string; laneId: string; pointIndex: number; time: number; value: number } }
+  | { type: 'REMOVE_AUTOMATION_POINT'; payload: { trackId: string; laneId: string; pointIndex: number } }
   | { type: 'REORDER_MASTER_PLUGIN'; payload: { fromIndex: number; toIndex: number } }
   | { type: 'UPDATE_AI_CONFIG'; payload: Partial<AIConfig> }
   | { type: 'TOGGLE_INSTRUMENT'; payload: Instrument }

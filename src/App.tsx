@@ -578,7 +578,7 @@ function DAWApp() {
             </Badge>
           </Group>
           <Text size="xs" c="dimmed">
-            riff DAW v0.1.0 | Space: Play/Pause | Home: Rewind | Ctrl+Scroll: Zoom | Ctrl+S: Save
+            riff DAW v0.1.0 | Space: Play/Pause | Home: Rewind | Ctrl/Cmd+Z: Undo/Redo | Ctrl+Scroll: Zoom | Ctrl+S: Save
           </Text>
         </Flex>
       </Paper>

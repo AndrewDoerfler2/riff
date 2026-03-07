@@ -1,41 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useDAW, PLUGIN_DEFINITIONS } from '../context/DAWContext';
 import type { PluginInstance, PluginType } from '../types/daw';
-
-const PARAM_RANGES: Record<string, { min: number; max: number; unit: string }> = {
-  low: { min: -18, max: 18, unit: 'dB' },
-  mid: { min: -18, max: 18, unit: 'dB' },
-  high: { min: -18, max: 18, unit: 'dB' },
-  lowFreq: { min: 20, max: 500, unit: 'Hz' },
-  midFreq: { min: 200, max: 8000, unit: 'Hz' },
-  highFreq: { min: 2000, max: 20000, unit: 'Hz' },
-  threshold: { min: -60, max: 0, unit: 'dB' },
-  ratio: { min: 1, max: 20, unit: ':1' },
-  attack: { min: 0.1, max: 200, unit: 'ms' },
-  release: { min: 1, max: 2000, unit: 'ms' },
-  knee: { min: 0, max: 30, unit: 'dB' },
-  makeupGain: { min: -12, max: 24, unit: 'dB' },
-  roomSize: { min: 0, max: 1, unit: '' },
-  dampening: { min: 0, max: 1, unit: '' },
-  wet: { min: 0, max: 1, unit: '' },
-  dry: { min: 0, max: 1, unit: '' },
-  preDelay: { min: 0, max: 100, unit: 'ms' },
-  time: { min: 0, max: 2, unit: 's' },
-  feedback: { min: 0, max: 0.99, unit: '' },
-  drive: { min: 0, max: 1, unit: '' },
-  tone: { min: 0, max: 1, unit: '' },
-  mix: { min: 0, max: 1, unit: '' },
-  rate: { min: 0.1, max: 10, unit: 'Hz' },
-  depth: { min: 0, max: 1, unit: '' },
-  delay: { min: 0, max: 50, unit: 'ms' },
-  phase: { min: 0, max: 360, unit: '°' },
-  gain: { min: -40, max: 40, unit: 'dB' },
-  trim: { min: -12, max: 12, unit: 'dB' },
-  sync: { min: 0, max: 1, unit: '' },
-  humFreq: { min: 50, max: 60, unit: 'Hz' },
-  q: { min: 4, max: 30, unit: '' },
-  reduction: { min: 6, max: 30, unit: 'dB' },
-};
+import { PARAM_RANGES, formatParameterLabel } from '../lib/pluginParameterRanges';
+import {
+  estimatePluginPerformance,
+  formatCpuPercent,
+  formatLatency,
+  sumPluginPerformance,
+} from '../lib/pluginPerformance';
 
 const EQ_PRESETS: Array<{ label: string; values: Record<string, number> }> = [
   { label: 'Singer + Instrument', values: { low: -2, mid: 2.5, high: 3, lowFreq: 100, midFreq: 2400, highFreq: 12000 } },
@@ -196,6 +168,7 @@ function PluginEditor({ plugin, trackId }: { plugin: PluginInstance; trackId: st
   const def = PLUGIN_DEFINITIONS[plugin.type];
   const [customPresetName, setCustomPresetName] = useState('');
   const customPresets = state.pluginPresets[plugin.type] ?? [];
+  const perf = useMemo(() => estimatePluginPerformance(plugin), [plugin]);
 
   useEffect(() => {
     setCustomPresetName('');
@@ -246,7 +219,7 @@ function PluginEditor({ plugin, trackId }: { plugin: PluginInstance; trackId: st
     return (
       <ParamKnob
         key={paramId}
-        name={paramId.replace(/([A-Z])/g, ' $1').trim()}
+        name={formatParameterLabel(paramId)}
         value={plugin.parameters[paramId] ?? range.min}
         min={range.min}
         max={range.max}
@@ -317,7 +290,11 @@ function PluginEditor({ plugin, trackId }: { plugin: PluginInstance; trackId: st
           <div className="plugin-color-dot" style={{ background: def.color }} />
           <span>{plugin.name}</span>
         </div>
-        <span className="plugin-editor-state">{plugin.enabled ? 'Live' : 'Bypassed'}</span>
+        <div className="plugin-editor-head-right">
+          <span className="plugin-editor-state">{plugin.enabled ? 'Live' : 'Bypassed'}</span>
+          <span className="plugin-perf-chip">{formatCpuPercent(perf.cpuPercent)}</span>
+          <span className="plugin-perf-chip">{formatLatency(perf.latencySamples)}</span>
+        </div>
       </div>
 
       {renderPluginSpecificEditor()}
@@ -378,6 +355,7 @@ function PluginSlot({ plugin, active, index, total, onSelect, onRemove, onToggle
   onMoveDown: () => void;
 }) {
   const def = PLUGIN_DEFINITIONS[plugin.type];
+  const perf = estimatePluginPerformance(plugin);
 
   return (
     <div className={`plugin-slot ${plugin.enabled ? 'enabled' : 'disabled'} ${active ? 'plugin-slot-active' : ''}`}>
@@ -419,6 +397,10 @@ function PluginSlot({ plugin, active, index, total, onSelect, onRemove, onToggle
           ✕
         </button>
       </div>
+      <div className="plugin-slot-metrics">
+        <span>{formatCpuPercent(perf.cpuPercent)}</span>
+        <span>{formatLatency(perf.latencySamples)}</span>
+      </div>
     </div>
   );
 }
@@ -431,6 +413,10 @@ export default function PluginRack() {
 
   const track = tracks.find(t => t.id === pluginRackTrackId);
   const selectedPlugin = track?.plugins.find(plugin => plugin.id === selectedPluginId) ?? track?.plugins[0] ?? null;
+  const chainPerf = useMemo(
+    () => (track ? sumPluginPerformance(track.plugins) : { cpuPercent: 0, latencySamples: 0 }),
+    [track],
+  );
 
   useEffect(() => {
     if (!track?.plugins.length) {
@@ -497,6 +483,9 @@ export default function PluginRack() {
           <span className="rack-track-name">{track.name}</span>
         </div>
         <span className="plugin-live-note">Live edits during playback</span>
+        <span className="plugin-chain-perf">
+          {formatCpuPercent(chainPerf.cpuPercent)} · {formatLatency(chainPerf.latencySamples)}
+        </span>
         <button
           className="add-plugin-btn"
           onClick={() => setShowAddMenu(!showAddMenu)}

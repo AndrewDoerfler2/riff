@@ -12,9 +12,11 @@ import {
   type TrackBusNode, type MasterChainNode, type PlaybackHandle,
 } from '../lib/audioNodes';
 import { computePeaksAsync, readFileAsArrayBuffer } from '../lib/audioUtils';
+import { resolveTrackAutomationAtTime } from '../lib/automation';
 import {
-  makePlugin, makeTrack, dawReducer, initialDAWState,
+  makePlugin, makeTrack, initialDAWState,
 } from './dawReducer';
+import { createInitialHistoryState, dawHistoryReducer } from './historyReducer';
 export { PLUGIN_DEFINITIONS } from './dawReducer';
 
 // ─── Context ───────────────────────────────────────────────────────────────────
@@ -22,6 +24,8 @@ export { PLUGIN_DEFINITIONS } from './dawReducer';
 interface DAWContextValue {
   state: DAWState;
   dispatch: React.Dispatch<DAWAction>;
+  canUndo: boolean;
+  canRedo: boolean;
   // Helpers
   makePlugin: (type: PluginType) => PluginInstance;
   createTrack: (type: TrackType) => Track;
@@ -30,8 +34,19 @@ interface DAWContextValue {
 const DAWContext = createContext<DAWContextValue | null>(null);
 
 export function DAWProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(dawReducer, initialDAWState);
-  const value: DAWContextValue = { state, dispatch, makePlugin, createTrack: makeTrack };
+  const [historyState, dispatch] = useReducer(
+    dawHistoryReducer,
+    initialDAWState,
+    createInitialHistoryState,
+  );
+  const value: DAWContextValue = {
+    state: historyState.present,
+    dispatch,
+    canUndo: historyState.past.length > 0,
+    canRedo: historyState.future.length > 0,
+    makePlugin,
+    createTrack: makeTrack,
+  };
   return <DAWContext.Provider value={value}>{children}</DAWContext.Provider>;
 }
 
@@ -373,6 +388,7 @@ export function useAudioEngine(): AudioEngineReturn {
 
   useEffect(() => {
     if (!trackBusMapRef.current.size) return;
+    const shouldApplyTimelineAutomation = state.isPlaying || state.isRecording;
     tracks.forEach(track => {
       const bus = trackBusMapRef.current.get(track.id);
       if (!bus) return;
@@ -386,13 +402,16 @@ export function useAudioEngine(): AudioEngineReturn {
         pluginFingerprintsRef.current.set(track.id, fingerprint);
       }
 
-      syncTrackBusNode(bus, track);
+      const syncSource = shouldApplyTimelineAutomation
+        ? resolveTrackAutomationAtTime(track, state.currentTime)
+        : track;
+      syncTrackBusNode(bus, syncSource);
     });
     // Sync master volume
     if (masterChainRef.current) {
       masterChainRef.current.masterGain.gain.value = state.masterVolume;
     }
-  }, [tracks, state.masterVolume]);
+  }, [tracks, state.masterVolume, state.currentTime, state.isPlaying, state.isRecording]);
 
   const startRecording = useCallback(async (armedTrackIds: string[]) => {
     if (!armedTrackIds.length || recordingActiveRef.current) return;

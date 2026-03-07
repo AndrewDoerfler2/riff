@@ -529,6 +529,7 @@ export default function Timeline() {
                 track={track}
                 zoom={zoom}
                 scrollLeft={scrollLeft}
+                currentTime={currentTime}
                 isRecording={isRecording}
                 selected={selectedTrackIds.includes(track.id)}
                 bpm={bpm}

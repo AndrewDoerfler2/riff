@@ -26,7 +26,7 @@ function parseTimeSignature(value: string): TimeSignature {
 // ─── Transport Bar ─────────────────────────────────────────────────────────────
 
 export default function Transport() {
-  const { state, dispatch } = useDAW();
+  const { state, dispatch, canUndo, canRedo } = useDAW();
   const {
     startRecording,
     stopRecording,
@@ -128,7 +128,28 @@ export default function Transport() {
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      const target = e.target;
+      if (
+        target instanceof HTMLInputElement
+        || target instanceof HTMLTextAreaElement
+        || target instanceof HTMLSelectElement
+        || (target instanceof HTMLElement && target.isContentEditable)
+      ) {
+        return;
+      }
+      const isMod = e.metaKey || e.ctrlKey;
+      const key = e.key.toLowerCase();
+      if (isMod && key === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) dispatch({ type: 'REDO' });
+        else dispatch({ type: 'UNDO' });
+        return;
+      }
+      if (isMod && key === 'y') {
+        e.preventDefault();
+        dispatch({ type: 'REDO' });
+        return;
+      }
       if (e.code === 'Space') {
         e.preventDefault();
         dispatch({ type: 'SET_PLAYING', payload: !isPlaying });
@@ -380,6 +401,26 @@ export default function Transport() {
     >
       <Group justify="space-between" wrap="nowrap">
         <Group gap="xs" wrap="nowrap">
+          <ActionIcon
+            variant="light"
+            color="gray"
+            size="lg"
+            title="Undo (Ctrl/Cmd+Z)"
+            onClick={() => dispatch({ type: 'UNDO' })}
+            disabled={!canUndo}
+          >
+            ↶
+          </ActionIcon>
+          <ActionIcon
+            variant="light"
+            color="gray"
+            size="lg"
+            title="Redo (Ctrl+Y or Shift+Ctrl/Cmd+Z)"
+            onClick={() => dispatch({ type: 'REDO' })}
+            disabled={!canRedo}
+          >
+            ↷
+          </ActionIcon>
           <ActionIcon variant="light" color="gray" size="lg" title="Rewind to Start (Home)" onClick={() => { dispatch({ type: 'SET_CURRENT_TIME', payload: 0 }); lastTimeRef.current = 0; }}>⏮</ActionIcon>
           <ActionIcon variant="light" color="gray" size="lg" title="Step Back" onClick={() => dispatch({ type: 'SET_CURRENT_TIME', payload: Math.max(0, currentTime - (60 / bpm)) })}>◀◀</ActionIcon>
           <ActionIcon variant={isPlaying ? 'filled' : 'light'} color={isPlaying ? 'green' : 'gray'} size="xl" title="Play / Pause (Space)" onClick={handlePlayPause}>{isPlaying ? '⏸' : '▶'}</ActionIcon>
