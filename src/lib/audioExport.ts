@@ -201,6 +201,16 @@ async function renderTracksToBuffer(state: DAWState, tracks: Track[]): Promise<{
   return { rendered, durationSeconds };
 }
 
+export async function renderTrackMixToAudioBuffer(
+  state: DAWState,
+  tracks: Track[],
+): Promise<{ rendered: AudioBuffer; durationSeconds: number }> {
+  if (!tracks.length) {
+    throw new Error('No tracks provided for rendering.');
+  }
+  return renderTracksToBuffer(state, tracks);
+}
+
 export async function exportProjectMixToWav(
   state: DAWState,
   onProgress?: ExportProgressCallback,

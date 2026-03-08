@@ -1,9 +1,10 @@
 import { useRef, useCallback, useEffect, useState, useMemo } from 'react';
 import { useDAW, useAudioEngineCtx } from '../context/DAWContext';
-import type { Track, AudioClip } from '../types/daw';
+import type { Track, AudioClip, Marker } from '../types/daw';
 import { TimeRuler } from './timeline/TimeRuler';
 import { TrackRow } from './timeline/TrackRow';
 import MidiClipEditor from './MidiClipEditor';
+import { useTimelineImport, type ClipRef } from '../hooks/useTimelineImport';
 
 // Re-export subcomponents for external consumers (e.g. tests)
 export { TimeRuler } from './timeline/TimeRuler';
@@ -15,18 +16,6 @@ const HEADER_W = 222;
 // Stable empty set so memoized TrackRow props don't break on tracks with no clips selected
 const EMPTY_CLIP_SET = new Set<string>();
 
-interface ImportStatus {
-  kind: 'audio' | 'video';
-  fileName: string;
-  progress: number;
-  stage: string;
-}
-
-interface ClipRef {
-  trackId: string;
-  clipId: string;
-}
-
 function clipKey(ref: ClipRef): string {
   return `${ref.trackId}::${ref.clipId}`;
 }
@@ -34,8 +23,8 @@ function clipKey(ref: ClipRef): string {
 // ─── Main Timeline ─────────────────────────────────────────────────────────────
 
 export default function Timeline() {
-  const { state, dispatch, createTrack } = useDAW();
-  const { analyserNode, createClipFromFile } = useAudioEngineCtx();
+  const { state, dispatch } = useDAW();
+  const { analyserNode } = useAudioEngineCtx();
   const {
     tracks,
     zoom,
@@ -51,21 +40,49 @@ export default function Timeline() {
     loopEnabled,
     loopStart,
     loopEnd,
+    markers,
   } = state;
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
-  const audioImportRef = useRef<HTMLInputElement>(null);
-  const videoImportRef = useRef<HTMLInputElement>(null);
   const [containerWidth, setContainerWidth] = useState(800);
   const [isDraggingPlayhead, setIsDraggingPlayhead] = useState(false);
-  const [importStatus, setImportStatus] = useState<ImportStatus | null>(null);
   const [selectedClips, setSelectedClips] = useState<ClipRef[]>([]);
   const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
   const [trackAnchorId, setTrackAnchorId] = useState<string | null>(null);
+  const [editingMarkerId, setEditingMarkerId] = useState<string | null>(null);
+  const [editingMarkerName, setEditingMarkerName] = useState('');
 
-  // Pre-compute per-track selected clip id sets so TrackRow memo is not broken
-  // by inline `new Set(...)` creation every render.
+  const MARKER_COLORS = ['#ffd60a', '#ff9f0a', '#30d158', '#64d2ff', '#bf5af2', '#ff453a', '#5ac8fa', '#ff6961'];
+  const nextMarkerColor = useCallback(() => {
+    const used = (markers ?? []).length;
+    return MARKER_COLORS[used % MARKER_COLORS.length];
+  }, [markers]);
+
+  // Import / MIDI-clip-creation logic lives in this hook
+  const {
+    audioImportRef,
+    videoImportRef,
+    midiImportRef,
+    importStatus,
+    importError,
+    setImportError,
+    pendingImportDecision,
+    canCancelStemImport,
+    activeStemGroup,
+    handleAudioImport,
+    handleVideoAudioImport,
+    handleImportKeepMaster,
+    handleImportSplitStems,
+    handleCancelStemImport,
+    handleMergeStemGroup,
+    handleCreateMidiClip,
+    handleMidiFileImport,
+    openMidiImport,
+    dismissImportDecision,
+  } = useTimelineImport(selectedTrackIds, setSelectedClips);
+
+  // Pre-compute per-track selected clip id sets so memoized TrackRow props stay stable
   const selectedClipIdsByTrack = useMemo(() => {
     const map = new Map<string, Set<string>>();
     for (const { trackId, clipId } of selectedClips) {
@@ -167,6 +184,28 @@ export default function Timeline() {
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
   }, [zoom, loopStart, loopEnd, dispatch]);
+
+  const addMarkerAtPlayhead = useCallback(() => {
+    const id = `m_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const markerCount = (markers ?? []).length + 1;
+    const marker: Marker = {
+      id,
+      name: `Marker ${markerCount}`,
+      time: currentTime,
+      color: nextMarkerColor(),
+    };
+    dispatch({ type: 'ADD_MARKER', payload: marker });
+  }, [currentTime, markers, nextMarkerColor, dispatch]);
+
+  const commitMarkerRename = useCallback(() => {
+    if (!editingMarkerId) return;
+    const name = editingMarkerName.trim();
+    if (name) {
+      dispatch({ type: 'UPDATE_MARKER', payload: { id: editingMarkerId, updates: { name } } });
+    }
+    setEditingMarkerId(null);
+    setEditingMarkerName('');
+  }, [editingMarkerId, editingMarkerName, dispatch]);
 
   const handleRulerClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -360,6 +399,12 @@ export default function Timeline() {
         return;
       }
 
+      if (event.key.toLowerCase() === 'm' && !event.metaKey && !event.ctrlKey) {
+        event.preventDefault();
+        addMarkerAtPlayhead();
+        return;
+      }
+
       if (event.key.toLowerCase() === 's' && !event.metaKey && !event.ctrlKey && selectedClips.length > 0) {
         event.preventDefault();
         splitSelectedClips();
@@ -380,7 +425,7 @@ export default function Timeline() {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [deleteClipRefs, deleteTracks, selectAllClips, selectedClips, selectedTrackIds, splitSelectedClips]);
+  }, [addMarkerAtPlayhead, deleteClipRefs, deleteTracks, selectAllClips, selectedClips, selectedTrackIds, splitSelectedClips]);
 
   const contentWidth = Math.max(containerWidth, state.viewDuration * zoom);
   const playheadLeft = currentTime * zoom - scrollLeft;
@@ -389,66 +434,16 @@ export default function Timeline() {
   const loopStartPx = loopStart * zoom - scrollLeft;
   const loopEndPx = loopEnd * zoom - scrollLeft;
   const loopWidthPx = loopEndPx - loopStartPx;
-  const selectedTrack = tracks.find(track => track.id === selectedTrackId) ?? null;
+  // Open MIDI editor for any clip on a midi-type track (even empty ones).
   const selectedMidiClip = useMemo(() => {
     if (selectedClips.length !== 1) return null;
     const selected = selectedClips[0];
     const track = tracks.find(t => t.id === selected.trackId);
     if (!track || track.type !== 'midi') return null;
     const clip = track.clips.find(c => c.id === selected.clipId);
-    if (!clip || !(clip.midiNotes?.length)) return null;
+    if (!clip) return null;
     return { track, clip };
   }, [selectedClips, tracks]);
-
-  const ensureAudioTrack = useCallback(() => {
-    if (selectedTrack && selectedTrack.type === 'audio') return selectedTrack.id;
-    const track = createTrack('audio');
-    dispatch({ type: 'ADD_TRACK_WITH_DATA', payload: track });
-    dispatch({ type: 'SELECT_TRACK', payload: track.id });
-    return track.id;
-  }, [createTrack, dispatch, selectedTrack]);
-
-  const importFileToTrack = useCallback(async (file: File, clipColor: string, kind: ImportStatus['kind']) => {
-    const trackId = ensureAudioTrack();
-    const clip = await createClipFromFile(file, {
-      startTime: currentTime,
-      color: clipColor,
-      onProgress: (progress, stage) => {
-        setImportStatus({ kind, fileName: file.name, progress, stage });
-      },
-    });
-    dispatch({ type: 'ADD_CLIP', payload: { trackId, clip } });
-    setImportStatus({ kind, fileName: file.name, progress: 100, stage: 'Complete' });
-    window.setTimeout(() => {
-      setImportStatus(current => (current?.fileName === file.name ? null : current));
-    }, 800);
-  }, [createClipFromFile, currentTime, dispatch, ensureAudioTrack]);
-
-  const handleAudioImport = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    try {
-      await importFileToTrack(file, '#64d2ff', 'audio');
-    } catch (err) {
-      setImportStatus(null);
-      console.error('Failed to import audio file:', err);
-      alert('Unable to import that audio file.');
-    }
-  }, [importFileToTrack]);
-
-  const handleVideoAudioImport = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    try {
-      await importFileToTrack(file, '#ff9f0a', 'video');
-    } catch (err) {
-      setImportStatus(null);
-      console.error('Failed to extract audio from video:', err);
-      alert('Unable to extract audio from that video file.');
-    }
-  }, [importFileToTrack]);
 
   const trackTypes: Array<{ type: Track['type']; label: string; icon: string }> = [
     { type: 'audio', label: 'Audio', icon: '🎙' },
@@ -504,6 +499,57 @@ export default function Timeline() {
               onMouseDown={startPlayheadDrag}
             >▼</div>
           )}
+
+          {/* ── Marker pins ── */}
+          {(markers ?? []).map((marker) => {
+            const markerLeft = marker.time * zoom - scrollLeft;
+            if (markerLeft < -80 || markerLeft > containerWidth + 4) return null;
+            const isEditing = editingMarkerId === marker.id;
+            return (
+              <div
+                key={marker.id}
+                className="marker-pin"
+                style={{ left: markerLeft, borderColor: marker.color }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  dispatch({ type: 'SET_CURRENT_TIME', payload: marker.time });
+                }}
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  setEditingMarkerId(marker.id);
+                  setEditingMarkerName(marker.name);
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  dispatch({ type: 'REMOVE_MARKER', payload: marker.id });
+                }}
+                title={`${marker.name} — click to seek, double-click to rename, right-click to delete`}
+              >
+                <div className="marker-pin-line" style={{ backgroundColor: marker.color }} />
+                {isEditing ? (
+                  <input
+                    className="marker-pin-input"
+                    value={editingMarkerName}
+                    autoFocus
+                    onChange={(e) => setEditingMarkerName(e.target.value)}
+                    onBlur={commitMarkerRename}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') { e.preventDefault(); commitMarkerRename(); }
+                      if (e.key === 'Escape') { setEditingMarkerId(null); setEditingMarkerName(''); }
+                      e.stopPropagation();
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ borderColor: marker.color }}
+                  />
+                ) : (
+                  <span className="marker-pin-label" style={{ background: marker.color, color: '#000' }}>
+                    {marker.name}
+                  </span>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -551,8 +597,33 @@ export default function Timeline() {
                 onSetTime={t => dispatch({ type: 'SET_CURRENT_TIME', payload: t })}
                 contentWidth={contentWidth}
                 analyser={analyserNode}
+                onCreateMidiClip={track.type === 'midi' ? handleCreateMidiClip : undefined}
+                onImportMidi={track.type === 'midi' ? () => openMidiImport(track.id) : undefined}
               />
             ))}
+            {tracks.length === 0 && (
+              <div className="timeline-empty-state">
+                <h3>No tracks yet</h3>
+                <p>Add an audio, MIDI, video, or bus track to start arranging.</p>
+                <div className="timeline-empty-actions">
+                  {trackTypes.map(({ type, label }) => (
+                    <button
+                      key={type}
+                      className="add-track-btn"
+                      onClick={() => dispatch({ type: 'ADD_TRACK', payload: type })}
+                    >
+                      Add {label} Track
+                    </button>
+                  ))}
+                  <button
+                    className="add-track-btn import-track-btn"
+                    onClick={() => audioImportRef.current?.click()}
+                  >
+                    Upload Audio
+                  </button>
+                </div>
+              </div>
+            )}
 
             {playheadLeft >= 0 && (
               <div
@@ -589,6 +660,21 @@ export default function Timeline() {
         >
           🎞 Extract Audio
         </button>
+        <button
+          className="add-track-btn import-track-btn"
+          onClick={() => openMidiImport(null)}
+        >
+          🎹 Import MIDI
+        </button>
+        {activeStemGroup && (
+          <button
+            className="add-track-btn import-track-btn"
+            onClick={handleMergeStemGroup}
+            title={`Create a merged master clip from ${activeStemGroup.totalTracks} separated stem tracks`}
+          >
+            🔊 Merge Stem Group
+          </button>
+        )}
         <input
           ref={audioImportRef}
           type="file"
@@ -603,15 +689,55 @@ export default function Timeline() {
           hidden
           onChange={handleVideoAudioImport}
         />
+        <input
+          ref={midiImportRef}
+          type="file"
+          accept=".mid,.midi"
+          hidden
+          onChange={handleMidiFileImport}
+        />
       </div>
+
+      {pendingImportDecision && (
+        <div className="stem-import-choice">
+          <div className="stem-import-choice-text">
+            Import <strong>{pendingImportDecision.file.name}</strong> as a single track or split into stems?
+          </div>
+          <div className="stem-import-choice-actions">
+            <button className="add-track-btn import-track-btn" onClick={handleImportSplitStems}>
+              Split into Stems
+            </button>
+            <button className="add-track-btn" onClick={handleImportKeepMaster}>
+              Keep Master
+            </button>
+            <button className="add-track-btn" onClick={dismissImportDecision}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {importStatus && (
         <div className="upload-progress-bar">
           <div className="upload-progress-meta">
             <span>
-              {importStatus.kind === 'audio' ? 'Uploading audio' : 'Extracting audio'}: {importStatus.fileName}
+              {importStatus.kind === 'audio'
+                ? 'Uploading audio'
+                : importStatus.kind === 'video'
+                  ? 'Extracting audio'
+                  : 'Processing stems'}: {importStatus.fileName}
             </span>
-            <span>{Math.round(importStatus.progress)}%</span>
+            <div className="upload-progress-meta-right">
+              <span>{Math.round(importStatus.progress)}%</span>
+              {importStatus.kind === 'stems' && canCancelStemImport && (
+                <button
+                  className="upload-progress-cancel"
+                  onClick={handleCancelStemImport}
+                >
+                  Cancel
+                </button>
+              )}
+            </div>
           </div>
           <div className="upload-progress-track">
             <div
@@ -620,6 +746,24 @@ export default function Timeline() {
             />
           </div>
           <div className="upload-progress-stage">{importStatus.stage}</div>
+        </div>
+      )}
+      {importError && (
+        <div className="upload-error-bar">
+          <span>
+            {importError.kind === 'audio'
+              ? 'Audio import failed'
+              : importError.kind === 'video'
+                ? 'Video audio extraction failed'
+                : 'Stem separation failed'}: {importError.message}
+          </span>
+          <button
+            className="upload-error-dismiss"
+            onClick={() => setImportError(null)}
+            aria-label="Dismiss import error"
+          >
+            Dismiss
+          </button>
         </div>
       )}
 

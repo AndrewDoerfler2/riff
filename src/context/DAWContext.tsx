@@ -86,7 +86,7 @@ interface AudioEngineReturn {
   ) => void;
   stopPlayback: () => void;
   startRecording: (armedTrackIds: string[]) => Promise<void>;
-  stopRecording: () => Promise<Map<string, AudioClip>>;
+  stopRecording: (clipStartTime?: number) => Promise<Map<string, AudioClip>>;
   createClipFromFile: (
     file: File,
     options?: { name?: string; startTime?: number; color?: string; onProgress?: (progress: number, stage: string) => void }
@@ -327,6 +327,8 @@ export function useAudioEngine(): AudioEngineReturn {
 
         const src = ctx.createBufferSource();
         src.buffer = clip.audioBuffer;
+        const pitchRate = Math.pow(2, (clip.pitchSemitones ?? 0) / 12);
+        src.playbackRate.value = pitchRate;
         const clipGain = ctx.createGain();
 
         // Clips connect directly to the track bus; plugins live in the bus chain.
@@ -437,7 +439,7 @@ export function useAudioEngine(): AudioEngineReturn {
     }
   }, [clearInputGraph, closeInputStream, ensureInputStream]);
 
-  const stopRecording = useCallback(async (): Promise<Map<string, AudioClip>> => {
+  const stopRecording = useCallback(async (clipStartTime?: number): Promise<Map<string, AudioClip>> => {
     const result = new Map<string, AudioClip>();
     if (!recorderRef.current) return result;
 
@@ -455,7 +457,7 @@ export function useAudioEngine(): AudioEngineReturn {
             const clip: AudioClip = {
               id: `clip_${Date.now()}_${trackId}`,
               name: 'Recording',
-              startTime: projectStartRef.current,
+              startTime: clipStartTime ?? projectStartRef.current,
               duration: audioBuffer.duration,
               audioBuffer,
               waveformPeaks: peaks,

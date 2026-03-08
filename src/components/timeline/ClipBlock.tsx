@@ -1,7 +1,59 @@
 import { memo, useRef } from 'react';
-import type { Track, AudioClip } from '../../types/daw';
+import type { Track, AudioClip, NoteEvent } from '../../types/daw';
 import WaveformCanvas from '../WaveformCanvas';
 import { MIN_CLIP_DURATION_SECONDS, maybeSnapTime } from '../../lib/timelineSnap';
+
+// ── Mini piano-roll preview ───────────────────────────────────────────────────
+
+interface MiniPianoRollProps {
+  notes: NoteEvent[];
+  clipStartBeats: number;
+  clipDurationBeats: number;
+  width: number;
+  height: number;
+  color: string;
+}
+
+function MiniPianoRoll({ notes, clipStartBeats, clipDurationBeats, width, height, color }: MiniPianoRollProps) {
+  if (!notes.length) {
+    return (
+      <div style={{ width, height, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <span style={{ color: color + '88', fontSize: 10 }}>Empty — click Edit to add notes</span>
+      </div>
+    );
+  }
+
+  const midiValues = notes.map(n => n.midi);
+  const minMidi = Math.min(...midiValues);
+  const maxMidi = Math.max(...midiValues);
+  const midiRange = Math.max(1, maxMidi - minMidi + 1);
+
+  const totalBeats = Math.max(0.25, clipDurationBeats);
+
+  return (
+    <svg width={width} height={height} style={{ display: 'block', overflow: 'hidden' }}>
+      {notes.map((note, i) => {
+        const relStart = Math.max(0, note.startBeats - clipStartBeats);
+        const x = (relStart / totalBeats) * width;
+        const noteWidth = Math.max(2, (note.durationBeats / totalBeats) * width);
+        const y = height - ((note.midi - minMidi + 1) / midiRange) * height;
+        const barHeight = Math.max(1, height / midiRange);
+        return (
+          <rect
+            key={i}
+            x={x}
+            y={y}
+            width={noteWidth}
+            height={barHeight}
+            fill={color}
+            opacity={Math.max(0.3, note.velocity)}
+            rx={1}
+          />
+        );
+      })}
+    </svg>
+  );
+}
 
 const MIN_TRACK_H = 96;
 
@@ -18,10 +70,11 @@ interface ClipBlockProps {
   onResize: (clipId: string, updates: Partial<AudioClip>) => void;
   onDelete: (clipId: string) => void;
   onSplit?: (clipId: string) => void;
+  onPitchChange?: (clipId: string, semitones: number) => void;
 }
 
 export const ClipBlock = memo(function ClipBlock({
-  clip, track, zoom, bpm, snapEnabled, selected, selectedCount, onSelect, onMove, onResize, onDelete, onSplit,
+  clip, track, zoom, bpm, snapEnabled, selected, selectedCount, onSelect, onMove, onResize, onDelete, onSplit, onPitchChange,
 }: ClipBlockProps) {
   const left = clip.startTime * zoom;
   const width = Math.max(4, clip.duration * zoom);
@@ -186,16 +239,32 @@ export const ClipBlock = memo(function ClipBlock({
       {/* ── Clip label ── */}
       <div className="clip-label" style={{ color: track.color }}>
         {clip.name}
+        {(clip.pitchSemitones ?? 0) !== 0 && (
+          <span className="clip-pitch-badge" title="Pitch shift (semitones — also affects speed)">
+            {(clip.pitchSemitones ?? 0) > 0 ? '+' : ''}{clip.pitchSemitones}st
+          </span>
+        )}
       </div>
 
-      {/* ── Waveform ── */}
-      <WaveformCanvas
-        peaks={visiblePeaks}
-        color={track.color}
-        width={Math.max(4, width - 4)}
-        height={Math.max(20, MIN_TRACK_H - 24)}
-        gain={clip.gain}
-      />
+      {/* ── Waveform or MIDI piano-roll preview ── */}
+      {clip.midiNotes !== undefined ? (
+        <MiniPianoRoll
+          notes={clip.midiNotes}
+          clipStartBeats={clip.startTime * (bpm / 60)}
+          clipDurationBeats={clip.duration * (bpm / 60)}
+          width={Math.max(4, width - 4)}
+          height={Math.max(20, MIN_TRACK_H - 24)}
+          color={track.color}
+        />
+      ) : (
+        <WaveformCanvas
+          peaks={visiblePeaks}
+          color={track.color}
+          width={Math.max(4, width - 4)}
+          height={Math.max(20, MIN_TRACK_H - 24)}
+          gain={clip.gain}
+        />
+      )}
 
       {/* ── Fade overlay (SVG gradients) ── */}
       {(fadeInPx > 0 || fadeOutPx > 0) && (
@@ -255,6 +324,51 @@ export const ClipBlock = memo(function ClipBlock({
             >
               ✂ Split
             </button>
+          )}
+          {onPitchChange && (
+            <>
+              <button
+                type="button"
+                className="clip-pitch-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onPitchChange(clip.id, Math.max(-24, (clip.pitchSemitones ?? 0) - 1));
+                }}
+                title="Pitch down 1 semitone"
+              >
+                ♭−
+              </button>
+              <span
+                className="clip-pitch-display"
+                title="Current pitch offset in semitones (tape-style: also affects speed)"
+              >
+                {(clip.pitchSemitones ?? 0) > 0 ? '+' : ''}{clip.pitchSemitones ?? 0}st
+              </span>
+              <button
+                type="button"
+                className="clip-pitch-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onPitchChange(clip.id, Math.min(24, (clip.pitchSemitones ?? 0) + 1));
+                }}
+                title="Pitch up 1 semitone"
+              >
+                ♯+
+              </button>
+              {(clip.pitchSemitones ?? 0) !== 0 && (
+                <button
+                  type="button"
+                  className="clip-pitch-btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onPitchChange(clip.id, 0);
+                  }}
+                  title="Reset pitch to 0"
+                >
+                  ↺
+                </button>
+              )}
+            </>
           )}
           <button
             type="button"

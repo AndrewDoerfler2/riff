@@ -195,6 +195,22 @@ Notes:
 - Requires `ffmpeg` and `ffprobe` on your system (`brew install ffmpeg` on macOS).
 - Use `--loop-video` if your audio is longer than the source video.
 
+### Preflight before YouTube upload
+
+Validate the latest package directory and publish-link checklist state before uploading:
+
+```bash
+npm run youtube:preflight
+```
+
+Optional flags:
+
+- `--package-dir /absolute/path/to/dist/youtube/YYYY-MM-DD-your-song-title`
+- `--packages-root /absolute/path/to/dist/youtube` (default: project `dist/youtube`)
+- `--readme /absolute/path/to/README.md`
+- `--project-page /absolute/path/to/SHOWCASE_RELEASE_PLAN.md`
+- `--roadmap /absolute/path/to/ROADMAP.md`
+
 ### Record the public YouTube URL in docs
 
 After publishing in YouTube Studio, run:
@@ -208,6 +224,8 @@ Optional flags:
 - `--label "Custom link text"` (default: `Riff Showcase Demo (YouTube)`)
 - `--date YYYY-MM-DD` (default: today)
 - `--readme /absolute/path/to/README.md` (default: project README)
+- `--project-page /absolute/path/to/SHOWCASE_RELEASE_PLAN.md` (default: showcase plan; updates project page link marker)
+- `--roadmap /absolute/path/to/ROADMAP.md` (default: project roadmap; publish checkboxes are auto-marked done when found)
 
 ### Export the final demo render pass
 
@@ -231,3 +249,19 @@ The run writes:
 - `chapters.txt` (chapter timestamps from the locked visual sequence)
 - `export-notes.txt` (render settings + verification checklist)
 - `render-manifest.json` (machine-readable artifact manifest)
+
+### Generate chapters from timeline markers
+
+If you exported a `.riff` project file with cue markers, generate YouTube chapter timestamps directly:
+
+```bash
+npm run chapters:from-markers -- \
+  --project /absolute/path/to/project.riff \
+  --out /absolute/path/to/chapters.txt
+```
+
+Optional flags:
+
+- `--minGap 10` minimum seconds required between adjacent chapters (default: `10`)
+- `--introLabel "Intro"` label to use for the forced `00:00` chapter (default: `Intro`)
+- `--no-intro` disable auto-inserting `00:00` (fails if first marker is not at `00:00`)

@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Track, AudioClip, AutomationLane, AutomationTarget } from '../../types/daw';
 import { useDAW } from '../../context/DAWContext';
 import LiveWaveform from '../LiveWaveform';
@@ -201,6 +201,10 @@ export interface TrackRowProps {
   onSetTime: (time: number) => void;
   contentWidth: number;
   analyser: AnalyserNode | null;
+  /** MIDI tracks only: create a blank MIDI clip at the given timeline time (seconds). */
+  onCreateMidiClip?: (startTime: number, trackId?: string) => void;
+  /** MIDI tracks only: trigger the file picker to import a .mid file onto this track. */
+  onImportMidi?: () => void;
 }
 
 export const TrackRow = memo(function TrackRow({
@@ -229,6 +233,8 @@ export const TrackRow = memo(function TrackRow({
   onSetTime,
   contentWidth,
   analyser,
+  onCreateMidiClip,
+  onImportMidi,
 }: TrackRowProps) {
   const { dispatch } = useDAW();
   const [flash, setFlash] = useState(false);
@@ -241,20 +247,28 @@ export const TrackRow = memo(function TrackRow({
     setFlash(false);
   }, [isRecording, track.armed]);
 
-  const handleContentClick = (e: React.MouseEvent<HTMLDivElement>) => {
+  const handleContentClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     onClearClipSelection();
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left + scrollLeft;
     onSetTime(x / zoom);
-  };
+  }, [onClearClipSelection, onSetTime, scrollLeft, zoom]);
+
+  const handleContentDoubleClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (!onCreateMidiClip) return;
+    e.stopPropagation();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left + scrollLeft;
+    onCreateMidiClip(x / zoom, track.id);
+  }, [onCreateMidiClip, scrollLeft, zoom, track.id]);
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(track.name);
 
-  const commitName = () => {
+  const commitName = useCallback(() => {
     dispatch({ type: 'UPDATE_TRACK', payload: { id: track.id, updates: { name: nameInput } } });
     setIsEditingName(false);
-  };
+  }, [dispatch, track.id, nameInput]);
 
   const isRecordingOnThis = isRecording && track.armed;
   const beatWidth = Math.max(20, zoom * (60 / bpm));
@@ -292,7 +306,7 @@ export const TrackRow = memo(function TrackRow({
 
   const selectedAutomationOption = addableAutomationOptions.find((option) => option.key === selectedAutomationKey) ?? null;
 
-  const addAutomationLane = () => {
+  const addAutomationLane = useCallback(() => {
     if (!selectedAutomationOption) return;
     dispatch({
       type: 'ADD_AUTOMATION_LANE',
@@ -301,35 +315,70 @@ export const TrackRow = memo(function TrackRow({
         target: selectedAutomationOption.target,
       },
     });
-  };
+  }, [dispatch, track.id, selectedAutomationOption]);
 
-  const upsertAutomationPoint = (laneId: string, time: number, value: number) => {
+  const upsertAutomationPoint = useCallback((laneId: string, time: number, value: number) => {
     dispatch({
       type: 'UPSERT_AUTOMATION_POINT',
       payload: { trackId: track.id, laneId, time, value },
     });
-  };
+  }, [dispatch, track.id]);
 
-  const updateAutomationPoint = (laneId: string, pointIndex: number, time: number, value: number) => {
+  const updateAutomationPoint = useCallback((laneId: string, pointIndex: number, time: number, value: number) => {
     dispatch({
       type: 'UPDATE_AUTOMATION_POINT',
       payload: { trackId: track.id, laneId, pointIndex, time, value },
     });
-  };
+  }, [dispatch, track.id]);
 
-  const removeAutomationPoint = (laneId: string, pointIndex: number) => {
+  const removeAutomationPoint = useCallback((laneId: string, pointIndex: number) => {
     dispatch({
       type: 'REMOVE_AUTOMATION_POINT',
       payload: { trackId: track.id, laneId, pointIndex },
     });
-  };
+  }, [dispatch, track.id]);
 
-  const removeAutomationLane = (laneId: string) => {
+  const removeAutomationLane = useCallback((laneId: string) => {
     dispatch({
       type: 'REMOVE_AUTOMATION_LANE',
       payload: { trackId: track.id, laneId },
     });
-  };
+  }, [dispatch, track.id]);
+
+  // Stable per-track clip callbacks — track.id is a fixed string for the lifetime of
+  // this row, so these only change when the parent's stable handlers change.
+  // This allows memo(ClipBlock) to skip re-renders on unrelated state changes
+  // (playhead position updates, recording flash, automation changes, etc.).
+  const handleClipSelect = useCallback(
+    (clipId: string, additive: boolean) => onSelectClip(track.id, clipId, additive),
+    [onSelectClip, track.id],
+  );
+  const handleClipMove = useCallback(
+    (clipId: string, newStart: number) => onClipMove(track.id, clipId, newStart),
+    [onClipMove, track.id],
+  );
+  const handleClipResize = useCallback(
+    (clipId: string, updates: Partial<AudioClip>) => onClipResize(track.id, clipId, updates),
+    [onClipResize, track.id],
+  );
+  const handleClipDelete = useCallback(
+    (clipId: string) => onClipDelete(track.id, clipId),
+    [onClipDelete, track.id],
+  );
+  const handleClipSplit = useMemo(
+    () => onClipSplit ? (clipId: string) => onClipSplit(track.id, clipId) : undefined,
+    [onClipSplit, track.id],
+  );
+
+  const handleClipPitch = useCallback(
+    (clipId: string, semitones: number) => {
+      dispatch({
+        type: 'UPDATE_CLIP',
+        payload: { trackId: track.id, clipId, updates: { pitchSemitones: semitones } },
+      });
+    },
+    [dispatch, track.id],
+  );
 
   const automationHeight = track.automationLaneExpanded
     ? AUTOMATION_TOOLBAR_H + Math.max(1, track.automationLanes.length) * AUTOMATION_LANE_H
@@ -456,6 +505,20 @@ export const TrackRow = memo(function TrackRow({
               dispatch({ type: 'TOGGLE_TRACK_AUTOMATION_LANES', payload: { trackId: track.id } });
             }}
           >Auto</button>
+          {onCreateMidiClip && (
+            <button
+              className="trk-btn-sm midi-new-clip-btn"
+              title="New blank MIDI clip at playhead"
+              onClick={(e) => { e.stopPropagation(); onCreateMidiClip(currentTime, track.id); }}
+            >+ Clip</button>
+          )}
+          {onImportMidi && (
+            <button
+              className="trk-btn-sm midi-import-btn"
+              title="Import .mid file onto this track"
+              onClick={(e) => { e.stopPropagation(); onImportMidi(); }}
+            >⤴ .mid</button>
+          )}
           <button
             className="trk-btn-sm delete-btn"
             title="Delete Track"
@@ -468,7 +531,7 @@ export const TrackRow = memo(function TrackRow({
         <div
           className="track-main-canvas"
           style={{
-            cursor: 'crosshair',
+            cursor: track.type === 'midi' ? 'cell' : 'crosshair',
             backgroundImage: `
               linear-gradient(180deg, rgba(255,255,255,0.025), rgba(255,255,255,0.01)),
               repeating-linear-gradient(
@@ -481,6 +544,7 @@ export const TrackRow = memo(function TrackRow({
             `,
           }}
           onClick={handleContentClick}
+          onDoubleClick={handleContentDoubleClick}
         >
           {isRecordingOnThis && (
             analyser ? (
@@ -499,7 +563,11 @@ export const TrackRow = memo(function TrackRow({
 
           {track.clips.length === 0 && !isRecordingOnThis && (
             <div className="track-empty-hint">
-              {track.armed ? '● Arm • Press ● Record to capture' : 'Click to set playhead'}
+              {track.type === 'midi'
+                ? 'Double-click to create a MIDI clip · Use ⤴ .mid to import'
+                : track.armed
+                  ? '● Arm • Press ● Record to capture'
+                  : 'Click to set playhead'}
             </div>
           )}
 
@@ -513,11 +581,12 @@ export const TrackRow = memo(function TrackRow({
               snapEnabled={snapEnabled}
               selected={selectedClipIds.has(clip.id)}
               selectedCount={selectedCount}
-              onSelect={(clipId, additive) => onSelectClip(track.id, clipId, additive)}
-              onMove={(clipId, newStart) => onClipMove(track.id, clipId, newStart)}
-              onResize={(clipId, updates) => onClipResize(track.id, clipId, updates)}
-              onDelete={(clipId) => onClipDelete(track.id, clipId)}
-              onSplit={onClipSplit ? (clipId) => onClipSplit(track.id, clipId) : undefined}
+              onSelect={handleClipSelect}
+              onMove={handleClipMove}
+              onResize={handleClipResize}
+              onDelete={handleClipDelete}
+              onSplit={handleClipSplit}
+              onPitchChange={handleClipPitch}
             />
           ))}
 

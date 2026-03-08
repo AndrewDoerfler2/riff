@@ -11,6 +11,8 @@
     "preview": "vite preview",
     "demo:export": "node scripts/export-final-demo.mjs",
     "youtube:package": "node scripts/youtube-music-video.mjs",
+    "youtube:preflight": "node scripts/youtube-publish-preflight.mjs",
+    "chapters:from-markers": "node scripts/chapters-from-markers.mjs",
     "youtube:link": "node scripts/publish-youtube-link.mjs",
     "test": "vitest run",
     "test:watch": "vitest",

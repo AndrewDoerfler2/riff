@@ -2,6 +2,10 @@
 
 This file locks the release-ready arrangement and visual sequence for the public demo video.
 
+<!-- PROJECT_PAGE_YOUTUBE_LINK:START -->
+- Public demo video: _Pending upload_
+<!-- PROJECT_PAGE_YOUTUBE_LINK:END -->
+
 ## Demo Target
 
 - Runtime: 2:30-3:00

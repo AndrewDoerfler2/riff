@@ -5,6 +5,7 @@ import { renderInstrumentPlan, instrumentColor } from '../lib/backingTrackRender
 import type { BackingTrackRequest, InstrumentPlan } from '../lib/backingTrackRenderer';
 import { INSTRUMENTS } from './aiPanelUtils';
 import { computePeaksAsync } from '../lib/audioUtils';
+import { exportClipAsMidi } from '../lib/midiExport';
 
 interface MidiClipEditorProps {
   track: Track;
@@ -19,6 +20,7 @@ const MIN_MIDI = 24;
 const MAX_MIDI = 108;
 const SNAP_BEATS = 0.25;
 const NUDGE_STEP = 0.25;
+const VELOCITY_LANE_HEIGHT = 64;
 
 const CHORD_ROOTS = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'] as const;
 const CHORD_QUALITIES: Array<{ value: ChordQuality; label: string }> = [
@@ -366,6 +368,36 @@ export default function MidiClipEditor({ track, clip, bpm, onClose }: MidiClipEd
     window.addEventListener('mouseup', onUp);
   };
 
+  const onVelBarDrag = (event: React.MouseEvent<HTMLDivElement>, noteIndex: number) => {
+    event.stopPropagation();
+    setSelectedNoteIndex(noteIndex);
+    const startY = event.clientY;
+    const note = notes[noteIndex];
+    if (!note) return;
+    const initialVelocity = note.velocity;
+
+    const onMove = (moveEvent: MouseEvent) => {
+      const deltaVelocity = (startY - moveEvent.clientY) / VELOCITY_LANE_HEIGHT;
+      dispatch({
+        type: 'UPDATE_MIDI_NOTE',
+        payload: {
+          trackId: track.id,
+          clipId: clip.id,
+          noteIndex,
+          updates: { velocity: clamp(initialVelocity + deltaVelocity, 0.05, 1) },
+        },
+      });
+    };
+
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
   return (
     <section className="midi-editor-panel">
       <div className="midi-editor-header">
@@ -384,55 +416,85 @@ export default function MidiClipEditor({ track, clip, bpm, onClose }: MidiClipEd
           >
             + Add Note
           </button>
+          <button
+            type="button"
+            className="midi-editor-btn"
+            title="Export this clip as a Standard MIDI File (.mid)"
+            onClick={() => exportClipAsMidi(clip, bpm)}
+            disabled={notes.length === 0}
+          >
+            ⬇ Export .mid
+          </button>
           <button type="button" className="midi-editor-btn" onClick={onClose}>Close</button>
         </div>
       </div>
 
       <div className="midi-editor-body">
         <div className="midi-editor-grid-wrap">
-          <div className="midi-editor-grid" style={{ width: pianoWidth, height: pianoHeight }} onDoubleClick={handleGridDoubleClick}>
-            {Array.from({ length: rowCount }).map((_, rowIndex) => {
-              const midi = maxMidi - rowIndex;
-              const isBlackKey = [1, 3, 6, 8, 10].includes(midi % 12);
-              return (
-                <div
-                  key={midi}
-                  className={`midi-row ${isBlackKey ? 'midi-row-black' : ''}`}
-                  style={{ top: rowIndex * ROW_HEIGHT, height: ROW_HEIGHT }}
-                >
-                  <span className="midi-row-label">{noteLabel(midi)}</span>
-                </div>
-              );
-            })}
+          <div className="midi-piano-and-vel">
+            <div className="midi-editor-grid" style={{ width: pianoWidth, height: pianoHeight }} onDoubleClick={handleGridDoubleClick}>
+              {Array.from({ length: rowCount }).map((_, rowIndex) => {
+                const midi = maxMidi - rowIndex;
+                const isBlackKey = [1, 3, 6, 8, 10].includes(midi % 12);
+                return (
+                  <div
+                    key={midi}
+                    className={`midi-row ${isBlackKey ? 'midi-row-black' : ''}`}
+                    style={{ top: rowIndex * ROW_HEIGHT, height: ROW_HEIGHT }}
+                  >
+                    <span className="midi-row-label">{noteLabel(midi)}</span>
+                  </div>
+                );
+              })}
 
-            {Array.from({ length: Math.ceil(totalBeats) + 1 }).map((_, beat) => (
-              <div
-                key={`beat_${beat}`}
-                className={`midi-beat-line ${beat % 4 === 0 ? 'midi-beat-bar' : ''}`}
-                style={{ left: beat * BEAT_WIDTH }}
-              />
-            ))}
-
-            {notes.map((note, noteIndex) => {
-              const left = getRelativeStartBeats(note, clipStartBeats) * BEAT_WIDTH;
-              const width = Math.max(8, note.durationBeats * BEAT_WIDTH);
-              const top = (maxMidi - note.midi) * ROW_HEIGHT + 1;
-              return (
+              {Array.from({ length: Math.ceil(totalBeats) + 1 }).map((_, beat) => (
                 <div
-                  key={`${note.startBeats}_${note.midi}_${noteIndex}`}
-                  className={`midi-note-block ${selectedNoteIndex === noteIndex ? 'selected' : ''}`}
-                  style={{ left, top, width, height: ROW_HEIGHT - 2, opacity: clamp(note.velocity, 0.15, 1) }}
-                  onMouseDown={(event) => onNoteDrag(event, noteIndex)}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setSelectedNoteIndex(noteIndex);
-                  }}
-                >
-                  <span className="midi-note-label">{noteLabel(note.midi)}</span>
-                  <div className="midi-note-resize-handle" onMouseDown={(event) => onNoteResize(event, noteIndex)} />
-                </div>
-              );
-            })}
+                  key={`beat_${beat}`}
+                  className={`midi-beat-line ${beat % 4 === 0 ? 'midi-beat-bar' : ''}`}
+                  style={{ left: beat * BEAT_WIDTH }}
+                />
+              ))}
+
+              {notes.map((note, noteIndex) => {
+                const left = getRelativeStartBeats(note, clipStartBeats) * BEAT_WIDTH;
+                const width = Math.max(8, note.durationBeats * BEAT_WIDTH);
+                const top = (maxMidi - note.midi) * ROW_HEIGHT + 1;
+                return (
+                  <div
+                    key={`${note.startBeats}_${note.midi}_${noteIndex}`}
+                    className={`midi-note-block ${selectedNoteIndex === noteIndex ? 'selected' : ''}`}
+                    style={{ left, top, width, height: ROW_HEIGHT - 2, opacity: clamp(note.velocity, 0.15, 1) }}
+                    onMouseDown={(event) => onNoteDrag(event, noteIndex)}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setSelectedNoteIndex(noteIndex);
+                    }}
+                  >
+                    <span className="midi-note-label">{noteLabel(note.midi)}</span>
+                    <div className="midi-note-resize-handle" onMouseDown={(event) => onNoteResize(event, noteIndex)} />
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Velocity lane */}
+            <div className="midi-velocity-lane" style={{ width: pianoWidth }}>
+              <span className="midi-vel-label">VEL</span>
+              {notes.map((note, noteIndex) => {
+                const left = getRelativeStartBeats(note, clipStartBeats) * BEAT_WIDTH;
+                const barHeight = Math.max(3, note.velocity * VELOCITY_LANE_HEIGHT);
+                const barWidth = Math.min(20, Math.max(5, note.durationBeats * BEAT_WIDTH - 2));
+                return (
+                  <div
+                    key={`vel_${note.startBeats}_${note.midi}_${noteIndex}`}
+                    className={`midi-vel-bar ${selectedNoteIndex === noteIndex ? 'selected' : ''}`}
+                    style={{ left, width: barWidth, height: barHeight }}
+                    onMouseDown={(e) => onVelBarDrag(e, noteIndex)}
+                    title={`Velocity: ${Math.round(note.velocity * 127)}`}
+                  />
+                );
+              })}
+            </div>
           </div>
         </div>
 
@@ -517,23 +579,25 @@ export default function MidiClipEditor({ track, clip, bpm, onClose }: MidiClipEd
               Replace Chord {selectedRelativeBeat != null ? '(Selected Note Beat)' : ''}
             </button>
           </div>
-          <div className="midi-tool-section midi-render-section">
-            <h5>Render to Audio</h5>
-            <p className="midi-render-note">
-              Bounce edited MIDI notes back to an audio clip using the same instrument engine.
-              {clip.audioBuffer ? ' (Re-renders existing audio.)' : ''}
-            </p>
-            {renderError && <p className="midi-render-error">{renderError}</p>}
-            <button
-              type="button"
-              className={`midi-editor-btn midi-render-btn ${isRendering ? 'midi-render-btn-busy' : ''}`}
-              onClick={handleRenderToAudio}
-              disabled={isRendering}
-            >
-              {isRendering ? '⟳ Rendering…' : '▶ Render to Audio'}
-            </button>
-          </div>
-          <p className="midi-editor-hint">Double-click grid: add note · Drag note: move pitch/time · Drag right edge: resize</p>
+          {clip.aiLink && (
+            <div className="midi-tool-section midi-render-section">
+              <h5>Render to Audio</h5>
+              <p className="midi-render-note">
+                Bounce edited MIDI notes back to an audio clip using the same instrument engine.
+                {clip.audioBuffer ? ' (Re-renders existing audio.)' : ''}
+              </p>
+              {renderError && <p className="midi-render-error">{renderError}</p>}
+              <button
+                type="button"
+                className={`midi-editor-btn midi-render-btn ${isRendering ? 'midi-render-btn-busy' : ''}`}
+                onClick={handleRenderToAudio}
+                disabled={isRendering}
+              >
+                {isRendering ? '⟳ Rendering…' : '▶ Render to Audio'}
+              </button>
+            </div>
+          )}
+          <p className="midi-editor-hint">Double-click grid: add note · Drag note: move pitch/time · Drag right edge: resize · Drag velocity bar: set velocity</p>
         </div>
       </div>
     </section>

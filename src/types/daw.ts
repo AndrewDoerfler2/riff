@@ -53,6 +53,7 @@ export interface AudioClip {
   fadeIn: number;      // seconds
   fadeOut: number;     // seconds
   offset: number;      // offset within original recording
+  pitchSemitones?: number; // tape-style pitch shift: positive = up, negative = down (also changes speed)
   midiNotes?: NoteEvent[];
   drumHits?: DrumHitEvent[];
   aiLink?: {
@@ -178,6 +179,9 @@ export interface Track {
   inputMonitor: boolean;
   busRouteId?: string;       // undefined = route to master
   meterMode: 'pre' | 'post'; // pre-fader or post-fader metering
+  stemGroupId?: string;
+  stemRole?: 'vocals' | 'drums' | 'bass' | 'other';
+  stemSourceName?: string;
 }
 
 // ─── AI Config ──────────────────────────────────────────────────────────────────
@@ -197,9 +201,18 @@ export interface AIConfig {
   progress: number;  // 0-100 generation progress
 }
 
+// ─── Marker ────────────────────────────────────────────────────────────────────
+
+export interface Marker {
+  id: string;
+  name: string;
+  time: number;   // seconds from project start
+  color: string;  // CSS color string
+}
+
 // ─── DAW State ─────────────────────────────────────────────────────────────────
 
-export type ActivePanel = 'ai' | 'plugins' | 'mixer' | 'video' | 'settings' | null;
+export type ActivePanel = 'ai' | 'plugins' | 'mixer' | 'video' | 'settings' | 'perf' | null;
 
 export interface DAWState {
   // Project
@@ -218,6 +231,7 @@ export interface DAWState {
   snapEnabled: boolean;
   preRollBars: number;
   overdubEnabled: boolean;
+  punchInEnabled: boolean;
 
   // Tracks
   tracks: Track[];
@@ -240,6 +254,9 @@ export interface DAWState {
   pluginPresets: Partial<Record<PluginType, PluginPreset[]>>;
   loudnessPreset: LoudnessPreset | null;
 
+  // Markers / cue points
+  markers: Marker[];
+
   // AI
   aiConfig: AIConfig;
 }
@@ -260,6 +277,7 @@ export type DAWAction =
   | { type: 'TOGGLE_SNAP' }
   | { type: 'SET_PRE_ROLL_BARS'; payload: number }
   | { type: 'TOGGLE_OVERDUB' }
+  | { type: 'TOGGLE_PUNCH_IN' }
   | { type: 'TOGGLE_AUTO_SCROLL' }
   | { type: 'ADD_TRACK'; payload: TrackType }
   | { type: 'ADD_TRACK_WITH_DATA'; payload: Track }
@@ -320,4 +338,7 @@ export type DAWAction =
     type: 'UPDATE_VIDEO_TEXT_OVERLAY';
     payload: { trackId: string; clipId: string; overlayId: string; updates: Partial<VideoTextOverlay> };
   }
-  | { type: 'REMOVE_VIDEO_TEXT_OVERLAY'; payload: { trackId: string; clipId: string; overlayId: string } };
+  | { type: 'REMOVE_VIDEO_TEXT_OVERLAY'; payload: { trackId: string; clipId: string; overlayId: string } }
+  | { type: 'ADD_MARKER'; payload: Marker }
+  | { type: 'UPDATE_MARKER'; payload: { id: string; updates: Partial<Omit<Marker, 'id'>> } }
+  | { type: 'REMOVE_MARKER'; payload: string };

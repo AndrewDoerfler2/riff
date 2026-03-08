@@ -29,6 +29,7 @@ const SHORTCUT_GROUPS: Array<{ title: string; items: ShortcutItem[] }> = [
     items: [
       { keys: ['Ctrl/Cmd', 'A'], action: 'Select all clips', scope: 'Timeline' },
       { keys: ['S'], action: 'Split selected clips at playhead', scope: 'Timeline' },
+      { keys: ['M'], action: 'Add cue marker at playhead', scope: 'Timeline' },
       { keys: ['Delete / Backspace'], action: 'Delete selected clips/tracks', scope: 'Timeline' },
     ],
   },

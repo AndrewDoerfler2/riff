@@ -154,6 +154,9 @@ interface SerializedTrack {
   armed: boolean; muted: boolean; soloed: boolean;
   volume: number; pan: number; height: number; inputMonitor: boolean;
   meterMode?: 'pre' | 'post';
+  stemGroupId?: string;
+  stemRole?: Track['stemRole'];
+  stemSourceName?: string;
   automationLanes?: Track['automationLanes'];
   automationLaneExpanded?: boolean;
   plugins: PluginInstance[];
@@ -180,6 +183,7 @@ export interface RiffProjectFile {
   }>>>;
   zoom: number;
   autoScroll?: boolean;
+  markers?: Array<{ id: string; name: string; time: number; color: string }>;
   aiConfig: {
     genre: string; bpm: number; key: string; timeSignature: string;
     bars: number; instruments: string[];
@@ -205,6 +209,7 @@ function serializeProject(state: DAWState, includeAudio: boolean): RiffProjectFi
     pluginPresets: state.pluginPresets,
     zoom: state.zoom,
     autoScroll: state.autoScroll,
+    markers: (state.markers ?? []).map(m => ({ id: m.id, name: m.name, time: m.time, color: m.color })),
     aiConfig: {
       genre: state.aiConfig.genre,
       bpm: state.aiConfig.bpm,
@@ -220,6 +225,9 @@ function serializeProject(state: DAWState, includeAudio: boolean): RiffProjectFi
       armed: track.armed, muted: track.muted, soloed: track.soloed,
       volume: track.volume, pan: track.pan, height: track.height,
       inputMonitor: track.inputMonitor, meterMode: track.meterMode,
+      stemGroupId: track.stemGroupId,
+      stemRole: track.stemRole,
+      stemSourceName: track.stemSourceName,
       automationLanes: track.automationLanes,
       automationLaneExpanded: track.automationLaneExpanded,
       plugins: track.plugins,
@@ -291,6 +299,9 @@ async function hydrateProject(
         armed: st.armed, muted: st.muted, soloed: st.soloed,
         volume: st.volume, pan: st.pan, height: st.height, inputMonitor: st.inputMonitor,
         meterMode: st.meterMode ?? 'post',
+        stemGroupId: st.stemGroupId,
+        stemRole: st.stemRole,
+        stemSourceName: st.stemSourceName,
         automationLanes: st.automationLanes ?? [],
         automationLaneExpanded: st.automationLaneExpanded ?? false,
         plugins: st.plugins, clips, videoClips,
@@ -310,6 +321,7 @@ async function hydrateProject(
     pluginPresets: file.pluginPresets ?? {},
     zoom: file.zoom,
     autoScroll: file.autoScroll ?? true,
+    markers: (file.markers ?? []).map(m => ({ id: m.id, name: m.name, time: Math.max(0, m.time), color: m.color })),
     aiConfig: {
       genre: file.aiConfig.genre as DAWState['aiConfig']['genre'],
       bpm: file.aiConfig.bpm,

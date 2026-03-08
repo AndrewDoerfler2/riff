@@ -1,7 +1,9 @@
 import type {
-  DAWState, DAWAction, Track, TrackType, PluginInstance, PluginType, NoteEvent, ChordQuality, VideoClip, VideoTextOverlay,
+  DAWState, DAWAction, Track, TrackType, PluginInstance, PluginType, NoteEvent, ChordQuality, Marker,
 } from '../types/daw';
 import { normalizeAutomationPoints, automationTargetKey } from '../lib/automation';
+import { genId, clamp, updateTrackById, updateTrackClipById } from './reducerUtils';
+import { videoReducer } from './videoReducer';
 
 const TRACK_COLORS = [
   '#0a84ff', '#30d158', '#ff9f0a', '#ff453a', '#bf5af2',
@@ -22,87 +24,10 @@ export const PLUGIN_DEFINITIONS: Record<PluginType, { name: string; color: strin
 };
 
 let trackCount = 0;
-function genId() { return `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`; }
 function genColor(idx: number) { return TRACK_COLORS[idx % TRACK_COLORS.length]; }
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
-}
-
-function clipVisibleDuration(clip: VideoClip): number {
-  return Math.max(0.1, clip.duration - clip.trimIn - clip.trimOut);
-}
-
-function normalizeVideoTextOverlay(
-  overlay: VideoTextOverlay,
-  visibleDuration: number,
-): VideoTextOverlay {
-  const safeDuration = Math.max(0.1, visibleDuration);
-  const safeStart = clamp(overlay.startOffset ?? 0, 0, Math.max(0, safeDuration - 0.1));
-  const minEnd = Math.min(safeDuration, safeStart + 0.1);
-  return {
-    ...overlay,
-    text: (overlay.text ?? '').slice(0, 240),
-    startOffset: safeStart,
-    endOffset: clamp(overlay.endOffset ?? minEnd, minEnd, safeDuration),
-    x: clamp(overlay.x ?? 0.5, 0, 1),
-    y: clamp(overlay.y ?? 0.85, 0, 1),
-    fontSize: clamp(overlay.fontSize ?? 28, 12, 72),
-    opacity: clamp(overlay.opacity ?? 1, 0, 1),
-    bgOpacity: clamp(overlay.bgOpacity ?? 0.55, 0, 1),
-  };
-}
-
-function normalizeVideoClip(clip: VideoClip): VideoClip {
-  const merged = { ...clip };
-  merged.trimIn = Math.max(0, merged.trimIn);
-  merged.trimOut = Math.max(0, merged.trimOut);
-  merged.opacity = clamp(merged.opacity, 0, 1);
-  merged.volume = clamp(merged.volume, 0, 1);
-  merged.layoutX = clamp(merged.layoutX ?? 0.5, 0, 1);
-  merged.layoutY = clamp(merged.layoutY ?? 0.5, 0, 1);
-  merged.layoutScale = clamp(merged.layoutScale ?? 1, 0.2, 2);
-  merged.startTime = Math.max(0, merged.startTime);
-  const visibleDuration = clipVisibleDuration(merged);
-  merged.textOverlays = (merged.textOverlays ?? [])
-    .map((overlay) => normalizeVideoTextOverlay(overlay, visibleDuration));
-  return merged;
-}
 
 function sortMidiNotes<T extends { startBeats: number; midi: number }>(notes: T[]): T[] {
   return notes.slice().sort((left, right) => left.startBeats - right.startBeats || left.midi - right.midi);
-}
-
-function updateTrackById(
-  tracks: Track[],
-  trackId: string,
-  updateTrack: (track: Track) => Track,
-): Track[] {
-  let changed = false;
-  const nextTracks = tracks.map((track) => {
-    if (track.id !== trackId) return track;
-    const nextTrack = updateTrack(track);
-    changed = changed || nextTrack !== track;
-    return nextTrack;
-  });
-  return changed ? nextTracks : tracks;
-}
-
-function updateTrackClipById(
-  tracks: Track[],
-  trackId: string,
-  clipId: string,
-  updateClip: (clip: Track['clips'][number]) => Track['clips'][number],
-): Track[] {
-  return updateTrackById(tracks, trackId, (track) => {
-    let changed = false;
-    const nextClips = track.clips.map((clip) => {
-      if (clip.id !== clipId) return clip;
-      const nextClip = updateClip(clip);
-      changed = changed || nextClip !== clip;
-      return nextClip;
-    });
-    return changed ? { ...track, clips: nextClips } : track;
-  });
 }
 
 function ensureUniqueAutomationLanes(track: Track): Track {
@@ -353,6 +278,7 @@ export const initialDAWState: DAWState = {
   snapEnabled: true,
   preRollBars: 0,
   overdubEnabled: true,
+  punchInEnabled: false,
 
   tracks: initialTracks,
   selectedTrackId: null,
@@ -369,6 +295,8 @@ export const initialDAWState: DAWState = {
 
   activePanel: null,
   pluginRackTrackId: null,
+
+  markers: [],
 
   aiConfig: {
     genre: 'pop',
@@ -399,6 +327,7 @@ export function dawReducer(state: DAWState, action: DAWAction): DAWState {
     case 'TOGGLE_SNAP': return { ...state, snapEnabled: !state.snapEnabled };
     case 'SET_PRE_ROLL_BARS': return { ...state, preRollBars: Math.max(0, Math.min(4, Math.round(action.payload))) };
     case 'TOGGLE_OVERDUB': return { ...state, overdubEnabled: !state.overdubEnabled };
+    case 'TOGGLE_PUNCH_IN': return { ...state, punchInEnabled: !state.punchInEnabled };
     case 'TOGGLE_AUTO_SCROLL': return { ...state, autoScroll: !state.autoScroll };
     case 'SET_MASTER_VOLUME': return { ...state, masterVolume: action.payload };
     case 'SET_MASTER_PAN': return { ...state, masterPan: clamp(action.payload, -1, 1) };
@@ -934,186 +863,38 @@ export function dawReducer(state: DAWState, action: DAWAction): DAWState {
       };
     }
 
-    // ─── Video Clip Actions ───────────────────────────────────────────────────────
-
+    // ─── Video Clip Actions ─── (delegated to videoReducer) ──────────────────────
     case 'ADD_VIDEO_CLIP':
-      return {
-        ...state,
-        tracks: updateTrackById(state.tracks, action.payload.trackId, (track) => ({
-          ...track,
-          videoClips: [...track.videoClips, normalizeVideoClip(action.payload.clip)],
-        })),
-      };
-
     case 'REMOVE_VIDEO_CLIP':
-      return {
-        ...state,
-        tracks: updateTrackById(state.tracks, action.payload.trackId, (track) => ({
-          ...track,
-          videoClips: track.videoClips.filter((vc) => vc.id !== action.payload.clipId),
-        })),
-      };
-
     case 'UPDATE_VIDEO_CLIP':
-      return {
-        ...state,
-        tracks: updateTrackById(state.tracks, action.payload.trackId, (track) => {
-          let changed = false;
-          const nextClips = track.videoClips.map((vc) => {
-            if (vc.id !== action.payload.clipId) return vc;
-            const merged = normalizeVideoClip({ ...vc, ...action.payload.updates });
-            changed = true;
-            return merged;
-          });
-          return changed ? { ...track, videoClips: nextClips } : track;
-        }),
-      };
-
     case 'MOVE_VIDEO_CLIP':
-      return {
-        ...state,
-        tracks: updateTrackById(state.tracks, action.payload.trackId, (track) => {
-          let changed = false;
-          const nextClips = track.videoClips.map((vc) => {
-            if (vc.id !== action.payload.clipId) return vc;
-            changed = true;
-            return { ...vc, startTime: Math.max(0, action.payload.startTime) };
-          });
-          return changed ? { ...track, videoClips: nextClips } : track;
-        }),
+    case 'SPLIT_VIDEO_CLIP':
+    case 'ADD_VIDEO_TEXT_OVERLAY':
+    case 'UPDATE_VIDEO_TEXT_OVERLAY':
+    case 'REMOVE_VIDEO_TEXT_OVERLAY':
+      return videoReducer(state, action);
+
+    // ─── Marker Actions ───────────────────────────────────────────────────────────
+
+    case 'ADD_MARKER': {
+      const marker: Marker = {
+        ...action.payload,
+        time: Math.max(0, action.payload.time),
+        name: (action.payload.name ?? '').slice(0, 60) || 'Marker',
       };
-
-    case 'SPLIT_VIDEO_CLIP': {
-      const { trackId, clipId, splitTime } = action.payload;
-      const MIN_VID_DURATION = 0.1;
-      return {
-        ...state,
-        tracks: state.tracks.map((track) => {
-          if (track.id !== trackId) return track;
-          const vc = track.videoClips.find((c) => c.id === clipId);
-          if (!vc) return track;
-
-          // Visible (trimmed) bounds
-          const visibleStart = vc.startTime;
-          const visibleEnd = vc.startTime + (vc.duration - vc.trimIn - vc.trimOut);
-
-          if (
-            splitTime <= visibleStart + MIN_VID_DURATION
-            || splitTime >= visibleEnd - MIN_VID_DURATION
-          ) {
-            return track;
-          }
-
-          const leftVisible = splitTime - visibleStart;
-          const rightVisible = visibleEnd - splitTime;
-          const sourceVisibleDuration = clipVisibleDuration(vc);
-
-          const leftOverlays = (vc.textOverlays ?? [])
-            .map((overlay) => {
-              if (overlay.endOffset <= 0 || overlay.startOffset >= leftVisible) return null;
-              return normalizeVideoTextOverlay({
-                ...overlay,
-                endOffset: Math.min(overlay.endOffset, leftVisible),
-              }, leftVisible);
-            })
-            .filter((overlay): overlay is VideoTextOverlay => Boolean(overlay));
-
-          const rightOverlays = (vc.textOverlays ?? [])
-            .map((overlay) => {
-              if (overlay.endOffset <= leftVisible || overlay.startOffset >= sourceVisibleDuration) return null;
-              const shiftedStart = Math.max(0, overlay.startOffset - leftVisible);
-              const shiftedEnd = Math.max(shiftedStart + 0.1, overlay.endOffset - leftVisible);
-              return normalizeVideoTextOverlay({
-                ...overlay,
-                startOffset: shiftedStart,
-                endOffset: shiftedEnd,
-              }, rightVisible);
-            })
-            .filter((overlay): overlay is VideoTextOverlay => Boolean(overlay));
-
-          // Left clip: same trimIn, adjust trimOut to make visible = leftVisible
-          const leftClip: typeof vc = {
-            ...vc,
-            id: genId(),
-            trimOut: vc.duration - vc.trimIn - leftVisible,
-            textOverlays: leftOverlays,
-          };
-
-          // Right clip: adjust trimIn to start at the split, no trimOut change
-          const rightClip: typeof vc = {
-            ...vc,
-            id: genId(),
-            startTime: splitTime,
-            trimIn: vc.trimIn + leftVisible,
-            duration: vc.duration, // source duration unchanged
-            textOverlays: rightOverlays,
-          };
-
-          // Guard: visible lengths must be positive
-          if (leftClip.trimOut < 0 || rightVisible <= 0) return track;
-
-          const nextVideoClips = track.videoClips.flatMap((c) =>
-            c.id === clipId ? [leftClip, rightClip] : [c],
-          );
-          return { ...track, videoClips: nextVideoClips };
-        }),
-      };
+      const sorted = [...(state.markers ?? []), marker].sort((a, b) => a.time - b.time);
+      return { ...state, markers: sorted };
     }
 
-    case 'ADD_VIDEO_TEXT_OVERLAY':
-      return {
-        ...state,
-        tracks: updateTrackById(state.tracks, action.payload.trackId, (track) => {
-          let changed = false;
-          const nextClips = track.videoClips.map((vc) => {
-            if (vc.id !== action.payload.clipId) return vc;
-            changed = true;
-            const visibleDuration = clipVisibleDuration(vc);
-            const normalizedOverlay = normalizeVideoTextOverlay(action.payload.overlay, visibleDuration);
-            const normalizedClip = normalizeVideoClip({
-              ...vc,
-              textOverlays: [...(vc.textOverlays ?? []), normalizedOverlay],
-            });
-            return normalizedClip;
-          });
-          return changed ? { ...track, videoClips: nextClips } : track;
-        }),
-      };
+    case 'UPDATE_MARKER': {
+      const next = (state.markers ?? []).map((m) =>
+        m.id === action.payload.id ? { ...m, ...action.payload.updates } : m,
+      );
+      return { ...state, markers: next.sort((a, b) => a.time - b.time) };
+    }
 
-    case 'UPDATE_VIDEO_TEXT_OVERLAY':
-      return {
-        ...state,
-        tracks: updateTrackById(state.tracks, action.payload.trackId, (track) => {
-          let changed = false;
-          const nextClips = track.videoClips.map((vc) => {
-            if (vc.id !== action.payload.clipId) return vc;
-            const existing = vc.textOverlays ?? [];
-            const nextOverlays = existing.map((overlay) => {
-              if (overlay.id !== action.payload.overlayId) return overlay;
-              changed = true;
-              return { ...overlay, ...action.payload.updates };
-            });
-            return changed ? normalizeVideoClip({ ...vc, textOverlays: nextOverlays }) : vc;
-          });
-          return changed ? { ...track, videoClips: nextClips } : track;
-        }),
-      };
-
-    case 'REMOVE_VIDEO_TEXT_OVERLAY':
-      return {
-        ...state,
-        tracks: updateTrackById(state.tracks, action.payload.trackId, (track) => {
-          let changed = false;
-          const nextClips = track.videoClips.map((vc) => {
-            if (vc.id !== action.payload.clipId) return vc;
-            const nextOverlays = (vc.textOverlays ?? []).filter((overlay) => overlay.id !== action.payload.overlayId);
-            if (nextOverlays.length === (vc.textOverlays ?? []).length) return vc;
-            changed = true;
-            return { ...vc, textOverlays: nextOverlays };
-          });
-          return changed ? { ...track, videoClips: nextClips } : track;
-        }),
-      };
+    case 'REMOVE_MARKER':
+      return { ...state, markers: (state.markers ?? []).filter((m) => m.id !== action.payload) };
 
     default:
       return state;

@@ -45,6 +45,7 @@ export default function Transport() {
   } = useAudioEngineCtx();
   const { isPlaying, isRecording, currentTime, bpm, timeSignature, loopEnabled,
           metronomeEnabled, snapEnabled, preRollBars, overdubEnabled,
+          punchInEnabled, loopStart, loopEnd,
           autoScroll, masterVolume, tracks } = state;
 
   const [editingBpm, setEditingBpm] = useState(false);
@@ -63,6 +64,36 @@ export default function Transport() {
   const tracksRef = useRef(tracks);
   useEffect(() => { tracksRef.current = tracks; }, [tracks]);
   useEffect(() => { recordLatchRef.current = isRecording; }, [isRecording]);
+
+  // ── Punch-in refs (synced from state so they're readable inside the isPlaying effect) ──
+  const punchInEnabledRef = useRef(punchInEnabled);
+  const loopStartRef = useRef(loopStart);
+  const loopEndRef = useRef(loopEnd);
+  const loopEnabledRef = useRef(loopEnabled);
+  const punchTimersRef = useRef<number[]>([]);
+  useEffect(() => { punchInEnabledRef.current = punchInEnabled; }, [punchInEnabled]);
+  useEffect(() => { loopStartRef.current = loopStart; }, [loopStart]);
+  useEffect(() => { loopEndRef.current = loopEnd; }, [loopEnd]);
+  useEffect(() => { loopEnabledRef.current = loopEnabled; }, [loopEnabled]);
+
+  const clearPunchTimers = useCallback(() => {
+    punchTimersRef.current.forEach(id => window.clearTimeout(id));
+    punchTimersRef.current = [];
+  }, []);
+
+  // ── Tap tempo ───────────────────────────────────────────────────────────────
+  const tapTimesRef = useRef<number[]>([]);
+  const handleTap = useCallback(() => {
+    const now = performance.now();
+    tapTimesRef.current = tapTimesRef.current.filter(t => now - t < 2500);
+    tapTimesRef.current.push(now);
+    const taps = tapTimesRef.current;
+    if (taps.length < 2) return;
+    const intervals = taps.slice(1).map((t, i) => t - taps[i]!);
+    const avgMs = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+    const newBpm = Math.round(60000 / avgMs);
+    dispatch({ type: 'SET_BPM', payload: newBpm });
+  }, [dispatch]);
   useEffect(() => {
     if (!isPlaying) lastTimeRef.current = currentTime;
   }, [currentTime, isPlaying]);
@@ -231,7 +262,57 @@ export default function Transport() {
               return;
             }
 
-            if (!isRecordingActive()) {
+            const usePunchIn = punchInEnabledRef.current && loopEnabledRef.current;
+            if (usePunchIn) {
+              // Punch-in: start playback now, but delay recording to loopStart→loopEnd.
+              // Ensure mic permission is obtained upfront (before audio starts).
+              try {
+                await startRecording(armedIds); // start immediately to open mic
+                // But immediately stop the recorder — we'll restart at punch in.
+                // Simpler: keep recorder warm but we'll schedule start/stop below.
+                // Actually, we need a real start; just accept a tiny pre-roll buffer and trim.
+                // Cleanest path: open mic + schedule start at punchIn, stop at punchOut.
+              } catch (err) {
+                console.error('Mic access failed:', err);
+                dispatch({ type: 'SET_RECORDING', payload: false });
+                dispatch({ type: 'SET_PLAYING', payload: false });
+                return;
+              }
+
+              // Immediately stop the recorder that startRecording created —
+              // we want a fresh start at the punch-in point.
+              if (isRecordingActive()) {
+                await stopRecording(); // discard the empty pre-punch buffer
+              }
+
+              const fromTime = lastTimeRef.current;
+              const punchStart = loopStartRef.current;
+              const punchEnd = loopEndRef.current;
+              const msUntilPunchIn = Math.max(0, (punchStart - fromTime) * 1000);
+              const msUntilPunchOut = Math.max(0, (punchEnd - fromTime) * 1000);
+
+              clearPunchTimers();
+              const punchInTimer = window.setTimeout(() => {
+                startRecording(armedIds).catch(err => {
+                  console.error('Punch-in recording failed:', err);
+                });
+              }, msUntilPunchIn);
+
+              const punchOutTimer = window.setTimeout(() => {
+                if (isRecordingActive()) {
+                  stopRecording(punchStart).then((clipMap) => {
+                    clipMap.forEach((clip, trackId) => {
+                      dispatch({ type: 'ADD_CLIP', payload: { trackId, clip } });
+                    });
+                    dispatch({ type: 'SET_RECORDING', payload: false });
+                  }).catch((err: unknown) => {
+                    console.error('Punch-out recording failed:', err);
+                  });
+                }
+              }, msUntilPunchOut);
+
+              punchTimersRef.current = [punchInTimer, punchOutTimer];
+            } else if (!isRecordingActive()) {
               try {
                 await startRecording(armedIds);
               } catch (err) {
@@ -311,6 +392,7 @@ export default function Transport() {
       });
     } else {
       clearCountIn();
+      clearPunchTimers();
       stopPlayback();
       if (animFrameRef.current !== null) cancelAnimationFrame(animFrameRef.current);
       lastTimeRef.current = currentTime;
@@ -327,6 +409,7 @@ export default function Transport() {
     }
     return () => {
       clearCountIn();
+      clearPunchTimers();
       if (animFrameRef.current !== null) cancelAnimationFrame(animFrameRef.current);
     };
   }, [isPlaying]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -508,7 +591,25 @@ export default function Transport() {
 
         <Group className="transport-right-controls" gap="md" wrap="nowrap">
           <Button size="xs" variant={loopEnabled ? 'filled' : 'light'} color={loopEnabled ? 'blue' : 'gray'} onClick={() => dispatch({ type: 'TOGGLE_LOOP' })}>Loop</Button>
+          <Button
+            size="xs"
+            variant={punchInEnabled ? 'filled' : 'light'}
+            color={punchInEnabled ? 'red' : 'gray'}
+            onClick={() => dispatch({ type: 'TOGGLE_PUNCH_IN' })}
+            title="Punch-In: when recording, only captures audio between Loop In and Loop Out markers"
+          >
+            Punch
+          </Button>
           <Button size="xs" variant={metronomeEnabled ? 'filled' : 'light'} color={metronomeEnabled ? 'blue' : 'gray'} onClick={() => dispatch({ type: 'TOGGLE_METRONOME' })}>Click</Button>
+          <Button
+            size="xs"
+            variant="light"
+            color="gray"
+            onClick={handleTap}
+            title="Tap Tempo — tap repeatedly to set BPM"
+          >
+            Tap
+          </Button>
           <Button
             size="xs"
             variant={preRollBars > 0 ? 'filled' : 'light'}

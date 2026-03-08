@@ -203,6 +203,7 @@ async function renderOffline(
 
       const src = offCtx.createBufferSource();
       src.buffer = clip.audioBuffer;
+      src.playbackRate.value = Math.pow(2, (clip.pitchSemitones ?? 0) / 12);
 
       const clipGain = offCtx.createGain();
       clipGain.gain.value = clip.gain;

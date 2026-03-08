@@ -1,8 +1,9 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
 import { useDAW } from '../context/DAWContext';
-import type { VideoClip, VideoTextOverlay } from '../types/daw';
+import type { VideoClip } from '../types/daw';
 import { computePeaksAsync, readFileAsArrayBuffer } from '../lib/audioUtils';
 import WaveformCanvas from './WaveformCanvas';
+import VideoClipPropsPanel from './VideoClipPropsPanel';
 
 const SCRUB_FPS = 30;
 const FRAME_SECONDS = 1 / SCRUB_FPS;
@@ -162,6 +163,8 @@ function VidClipBlock({ clip, trackColor, zoom, scrollLeft, selected, onSelect, 
 
 // ─── Video Editor Panel ────────────────────────────────────────────────────────
 
+// ─── VideoEditor ──────────────────────────────────────────────────────────────
+
 function makeVideoClip(
   file: File,
   startTime: number,
@@ -189,27 +192,11 @@ function makeVideoClip(
   };
 }
 
-function makeTextOverlay(startOffset: number, visibleDuration: number): VideoTextOverlay {
-  const safeStart = clamp(startOffset, 0, Math.max(0, visibleDuration - 0.1));
-  return {
-    id: `txt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-    text: 'New subtitle',
-    startOffset: safeStart,
-    endOffset: Math.min(visibleDuration, safeStart + 1.5),
-    x: 0.5,
-    y: 0.85,
-    fontSize: 28,
-    opacity: 1,
-    bgOpacity: 0.55,
-  };
-}
-
 export default function VideoEditor() {
   const { state, dispatch } = useDAW();
   const { tracks, zoom, scrollLeft, currentTime } = state;
 
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
-  const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(null);
   const [pendingImports, setPendingImports] = useState<{ clip: VideoClip; trackId: string | null }[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -265,7 +252,6 @@ export default function VideoEditor() {
   const selectedVisibleDuration = selectedClip
     ? Math.max(0.1, selectedClip.duration - selectedClip.trimIn - selectedClip.trimOut)
     : 0;
-  const selectedOverlay = selectedClip?.textOverlays?.find((overlay) => overlay.id === selectedOverlayId) ?? null;
   const playheadEntry = allVideoClips.find(({ clip }) => {
     const visibleDuration = Math.max(0.1, clip.duration - clip.trimIn - clip.trimOut);
     return currentTime >= clip.startTime && currentTime <= clip.startTime + visibleDuration;
@@ -328,65 +314,6 @@ export default function VideoEditor() {
       delete videoLayerRefs.current[clipId];
     }
   }, []);
-
-  const updateSelected = useCallback((updates: Partial<VideoClip>) => {
-    if (!selectedEntry) return;
-    dispatch({
-      type: 'UPDATE_VIDEO_CLIP',
-      payload: { trackId: selectedEntry.trackId, clipId: selectedEntry.clip.id, updates },
-    });
-  }, [dispatch, selectedEntry]);
-
-  const addTextOverlay = useCallback(() => {
-    if (!selectedEntry || !selectedClip) return;
-    const visibleDuration = Math.max(0.1, selectedClip.duration - selectedClip.trimIn - selectedClip.trimOut);
-    const overlayStart = clamp(currentTime - selectedClip.startTime, 0, visibleDuration);
-    const overlay = makeTextOverlay(overlayStart, visibleDuration);
-    dispatch({
-      type: 'ADD_VIDEO_TEXT_OVERLAY',
-      payload: { trackId: selectedEntry.trackId, clipId: selectedClip.id, overlay },
-    });
-    setSelectedOverlayId(overlay.id);
-  }, [currentTime, dispatch, selectedClip, selectedEntry]);
-
-  const updateSelectedOverlay = useCallback((updates: Partial<VideoTextOverlay>) => {
-    if (!selectedEntry || !selectedClip || !selectedOverlayId) return;
-    dispatch({
-      type: 'UPDATE_VIDEO_TEXT_OVERLAY',
-      payload: {
-        trackId: selectedEntry.trackId,
-        clipId: selectedClip.id,
-        overlayId: selectedOverlayId,
-        updates,
-      },
-    });
-  }, [dispatch, selectedClip, selectedEntry, selectedOverlayId]);
-
-  const removeSelectedOverlay = useCallback(() => {
-    if (!selectedEntry || !selectedClip || !selectedOverlayId) return;
-    dispatch({
-      type: 'REMOVE_VIDEO_TEXT_OVERLAY',
-      payload: {
-        trackId: selectedEntry.trackId,
-        clipId: selectedClip.id,
-        overlayId: selectedOverlayId,
-      },
-    });
-    setSelectedOverlayId(null);
-  }, [dispatch, selectedClip, selectedEntry, selectedOverlayId]);
-
-  useEffect(() => {
-    if (!selectedClipId) {
-      setSelectedOverlayId(null);
-      return;
-    }
-    if (!selectedClip) {
-      setSelectedOverlayId(null);
-      return;
-    }
-    if (selectedOverlayId && selectedClip.textOverlays.some((overlay) => overlay.id === selectedOverlayId)) return;
-    setSelectedOverlayId(selectedClip.textOverlays[0]?.id ?? null);
-  }, [selectedClip, selectedClipId, selectedOverlayId]);
 
   const scrubSelectedClip = useCallback((secondsFromVisibleStart: number) => {
     if (!previewClip) return;
@@ -528,313 +455,13 @@ export default function VideoEditor() {
           )}
 
           {selectedClip && selectedEntry && (
-            <div className="video-clip-props">
-              <div className="vid-prop-label">Clip Properties — {selectedClip.name}</div>
-
-              <div className="vid-prop-row">
-                <span>Start</span>
-                <span>{selectedClip.startTime.toFixed(2)}s</span>
-              </div>
-              <div className="vid-prop-row">
-                <span>Source duration</span>
-                <span>{selectedClip.duration.toFixed(2)}s</span>
-              </div>
-              <div className="vid-prop-row">
-                <span>Visible duration</span>
-                <span>
-                  {Math.max(0, selectedClip.duration - selectedClip.trimIn - selectedClip.trimOut).toFixed(2)}s
-                </span>
-              </div>
-
-              {/* Trim In */}
-              <div className="vid-prop-row">
-                <label htmlFor="vid-trim-in">Trim in</label>
-                <input
-                  id="vid-trim-in"
-                  type="range"
-                  min={0}
-                  max={Math.max(0, selectedClip.duration - selectedClip.trimOut - 0.1)}
-                  step={0.01}
-                  value={selectedClip.trimIn}
-                  onChange={e => updateSelected({ trimIn: parseFloat(e.target.value) })}
-                  className="vid-prop-slider"
-                />
-                <span>{selectedClip.trimIn.toFixed(2)}s</span>
-              </div>
-
-              {/* Trim Out */}
-              <div className="vid-prop-row">
-                <label htmlFor="vid-trim-out">Trim out</label>
-                <input
-                  id="vid-trim-out"
-                  type="range"
-                  min={0}
-                  max={Math.max(0, selectedClip.duration - selectedClip.trimIn - 0.1)}
-                  step={0.01}
-                  value={selectedClip.trimOut}
-                  onChange={e => updateSelected({ trimOut: parseFloat(e.target.value) })}
-                  className="vid-prop-slider"
-                />
-                <span>{selectedClip.trimOut.toFixed(2)}s</span>
-              </div>
-
-              {/* Opacity */}
-              <div className="vid-prop-row">
-                <label htmlFor="vid-opacity">Opacity</label>
-                <input
-                  id="vid-opacity"
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={selectedClip.opacity}
-                  onChange={e => updateSelected({ opacity: parseFloat(e.target.value) })}
-                  className="vid-prop-slider"
-                />
-                <span>{Math.round(selectedClip.opacity * 100)}%</span>
-              </div>
-
-              <div className="vid-prop-row">
-                <label htmlFor="vid-layout-x">PiP X</label>
-                <input
-                  id="vid-layout-x"
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={selectedClip.layoutX ?? 0.5}
-                  onChange={e => updateSelected({ layoutX: parseFloat(e.target.value) })}
-                  className="vid-prop-slider"
-                />
-                <span>{Math.round((selectedClip.layoutX ?? 0.5) * 100)}%</span>
-              </div>
-
-              <div className="vid-prop-row">
-                <label htmlFor="vid-layout-y">PiP Y</label>
-                <input
-                  id="vid-layout-y"
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={selectedClip.layoutY ?? 0.5}
-                  onChange={e => updateSelected({ layoutY: parseFloat(e.target.value) })}
-                  className="vid-prop-slider"
-                />
-                <span>{Math.round((selectedClip.layoutY ?? 0.5) * 100)}%</span>
-              </div>
-
-              <div className="vid-prop-row">
-                <label htmlFor="vid-layout-scale">PiP scale</label>
-                <input
-                  id="vid-layout-scale"
-                  type="range"
-                  min={0.2}
-                  max={2}
-                  step={0.01}
-                  value={selectedClip.layoutScale ?? 1}
-                  onChange={e => updateSelected({ layoutScale: parseFloat(e.target.value) })}
-                  className="vid-prop-slider"
-                />
-                <span>{(selectedClip.layoutScale ?? 1).toFixed(2)}x</span>
-              </div>
-
-              {/* Audio volume */}
-              <div className="vid-prop-row">
-                <label htmlFor="vid-volume">Audio vol</label>
-                <input
-                  id="vid-volume"
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={selectedClip.volume}
-                  onChange={e => updateSelected({ volume: parseFloat(e.target.value) })}
-                  className="vid-prop-slider"
-                />
-                <span>{Math.round(selectedClip.volume * 100)}%</span>
-              </div>
-
-              <div className="vid-prop-overlay-head">
-                <span>Subtitle overlays ({selectedClip.textOverlays.length})</span>
-                <button className="vid-split-btn" onClick={addTextOverlay}>+ Add at playhead</button>
-              </div>
-              {selectedClip.textOverlays.length > 0 ? (
-                <>
-                  <div className="vid-overlay-list">
-                    {selectedClip.textOverlays.map((overlay, index) => (
-                      <button
-                        key={overlay.id}
-                        className={`vid-overlay-pill ${selectedOverlayId === overlay.id ? 'active' : ''}`}
-                        onClick={() => setSelectedOverlayId(overlay.id)}
-                        title={overlay.text}
-                      >
-                        {index + 1}. {overlay.text || '(empty)'}
-                      </button>
-                    ))}
-                  </div>
-
-                  {selectedOverlay && (
-                    <>
-                      <div className="vid-prop-row">
-                        <label htmlFor="vid-overlay-text">Text</label>
-                        <input
-                          id="vid-overlay-text"
-                          type="text"
-                          value={selectedOverlay.text}
-                          maxLength={240}
-                          onChange={(e) => updateSelectedOverlay({ text: e.target.value })}
-                          className="vid-text-input"
-                        />
-                      </div>
-                      <div className="vid-prop-row">
-                        <label htmlFor="vid-overlay-start">Start</label>
-                        <input
-                          id="vid-overlay-start"
-                          type="range"
-                          min={0}
-                          max={Math.max(0.1, selectedVisibleDuration - 0.1)}
-                          step={0.01}
-                          value={selectedOverlay.startOffset}
-                          onChange={(e) => updateSelectedOverlay({ startOffset: parseFloat(e.target.value) })}
-                          className="vid-prop-slider"
-                        />
-                        <span>{selectedOverlay.startOffset.toFixed(2)}s</span>
-                      </div>
-                      <div className="vid-prop-row">
-                        <label htmlFor="vid-overlay-end">End</label>
-                        <input
-                          id="vid-overlay-end"
-                          type="range"
-                          min={Math.min(selectedVisibleDuration, selectedOverlay.startOffset + 0.1)}
-                          max={selectedVisibleDuration}
-                          step={0.01}
-                          value={selectedOverlay.endOffset}
-                          onChange={(e) => updateSelectedOverlay({ endOffset: parseFloat(e.target.value) })}
-                          className="vid-prop-slider"
-                        />
-                        <span>{selectedOverlay.endOffset.toFixed(2)}s</span>
-                      </div>
-                      <div className="vid-prop-row">
-                        <label htmlFor="vid-overlay-x">X</label>
-                        <input
-                          id="vid-overlay-x"
-                          type="range"
-                          min={0}
-                          max={1}
-                          step={0.01}
-                          value={selectedOverlay.x}
-                          onChange={(e) => updateSelectedOverlay({ x: parseFloat(e.target.value) })}
-                          className="vid-prop-slider"
-                        />
-                        <span>{Math.round(selectedOverlay.x * 100)}%</span>
-                      </div>
-                      <div className="vid-prop-row">
-                        <label htmlFor="vid-overlay-y">Y</label>
-                        <input
-                          id="vid-overlay-y"
-                          type="range"
-                          min={0}
-                          max={1}
-                          step={0.01}
-                          value={selectedOverlay.y}
-                          onChange={(e) => updateSelectedOverlay({ y: parseFloat(e.target.value) })}
-                          className="vid-prop-slider"
-                        />
-                        <span>{Math.round(selectedOverlay.y * 100)}%</span>
-                      </div>
-                      <div className="vid-prop-row">
-                        <label htmlFor="vid-overlay-size">Size</label>
-                        <input
-                          id="vid-overlay-size"
-                          type="range"
-                          min={12}
-                          max={72}
-                          step={1}
-                          value={selectedOverlay.fontSize}
-                          onChange={(e) => updateSelectedOverlay({ fontSize: parseFloat(e.target.value) })}
-                          className="vid-prop-slider"
-                        />
-                        <span>{Math.round(selectedOverlay.fontSize)}px</span>
-                      </div>
-                      <div className="vid-prop-row">
-                        <label htmlFor="vid-overlay-opacity">Text opac</label>
-                        <input
-                          id="vid-overlay-opacity"
-                          type="range"
-                          min={0}
-                          max={1}
-                          step={0.01}
-                          value={selectedOverlay.opacity}
-                          onChange={(e) => updateSelectedOverlay({ opacity: parseFloat(e.target.value) })}
-                          className="vid-prop-slider"
-                        />
-                        <span>{Math.round(selectedOverlay.opacity * 100)}%</span>
-                      </div>
-                      <div className="vid-prop-row">
-                        <label htmlFor="vid-overlay-bg-opacity">BG opac</label>
-                        <input
-                          id="vid-overlay-bg-opacity"
-                          type="range"
-                          min={0}
-                          max={1}
-                          step={0.01}
-                          value={selectedOverlay.bgOpacity}
-                          onChange={(e) => updateSelectedOverlay({ bgOpacity: parseFloat(e.target.value) })}
-                          className="vid-prop-slider"
-                        />
-                        <span>{Math.round(selectedOverlay.bgOpacity * 100)}%</span>
-                      </div>
-                      <div className="vid-prop-actions">
-                        <button className="vid-remove-btn" onClick={removeSelectedOverlay}>
-                          Remove subtitle
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </>
-              ) : (
-                <div className="vid-overlay-empty">No subtitles yet. Add one at the playhead.</div>
-              )}
-
-              <div className="vid-prop-actions">
-                <button
-                  className="vid-split-btn"
-                  onClick={() => updateSelected({ layoutX: 0.5, layoutY: 0.5, layoutScale: 1 })}
-                >
-                  Reset PiP
-                </button>
-                <button
-                  className="vid-split-btn"
-                  title="Split clip at playhead"
-                  onClick={() => {
-                    dispatch({
-                      type: 'SPLIT_VIDEO_CLIP',
-                      payload: {
-                        trackId: selectedEntry.trackId,
-                        clipId: selectedClip.id,
-                        splitTime: currentTime,
-                      },
-                    });
-                    setSelectedClipId(null);
-                  }}
-                >
-                  ✂ Split at playhead
-                </button>
-                <button
-                  className="vid-remove-btn"
-                  onClick={() => {
-                    dispatch({
-                      type: 'REMOVE_VIDEO_CLIP',
-                      payload: { trackId: selectedEntry.trackId, clipId: selectedClip.id },
-                    });
-                    setSelectedClipId(null);
-                  }}
-                >
-                  🗑 Remove
-                </button>
-              </div>
-            </div>
+            <VideoClipPropsPanel
+              clip={selectedClip}
+              trackId={selectedEntry.trackId}
+              visibleDuration={selectedVisibleDuration}
+              currentTime={currentTime}
+              onDeselect={() => setSelectedClipId(null)}
+            />
           )}
         </div>
 

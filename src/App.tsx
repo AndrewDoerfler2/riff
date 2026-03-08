@@ -20,6 +20,7 @@ import AIPanel from './components/AIPanel';
 import PluginRack from './components/PluginRack';
 import VideoEditor from './components/VideoEditor';
 import ProjectSettingsPanel from './components/ProjectSettingsPanel';
+import PerformanceDiagnosticsPanel from './components/PerformanceDiagnosticsPanel';
 import KeyboardShortcutsModal from './components/KeyboardShortcutsModal';
 import {
   saveProjectLocally,
@@ -41,6 +42,7 @@ import './App.css';
 // ─── Save status type ──────────────────────────────────────────────────────────
 
 type SaveStatus = 'unsaved' | 'saving' | 'saved' | 'error';
+type ProjectLoadStatus = 'idle' | 'loading' | 'loaded' | 'error';
 
 // ─── Export operation state ────────────────────────────────────────────────────
 
@@ -68,6 +70,8 @@ function DAWApp() {
   const cancelExportRef = useRef<CancelToken>({ cancelled: false });
   const [preflight, setPreflight] = useState<{ report: PreflightReport; kind: 'mix' | 'stems' } | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [projectLoadStatus, setProjectLoadStatus] = useState<ProjectLoadStatus>('idle');
+  const [projectLoadError, setProjectLoadError] = useState<string | null>(null);
 
   const getPanelMinHeight = useCallback(() => (window.innerWidth <= 900 ? 180 : 220), []);
 
@@ -78,14 +82,24 @@ function DAWApp() {
   // ── Auto-load on first mount ───────────────────────────────────────────────
   useEffect(() => {
     if (!hasSavedProject()) return;
+    setProjectLoadStatus('loading');
+    setProjectLoadError(null);
     loadProjectLocally()
       .then(partial => {
         if (partial) {
           dispatch({ type: 'LOAD_PROJECT', payload: partial });
           setSaveStatus('saved');
         }
+        setProjectLoadStatus('loaded');
+        window.setTimeout(() => {
+          setProjectLoadStatus(current => (current === 'loaded' ? 'idle' : current));
+        }, 2400);
       })
-      .catch(err => console.error('riff: auto-load failed', err));
+      .catch(err => {
+        console.error('riff: auto-load failed', err);
+        setProjectLoadStatus('error');
+        setProjectLoadError(err instanceof Error ? err.message : 'Failed to load local project.');
+      });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Auto-save with 5s debounce on state changes ────────────────────────────
@@ -267,8 +281,15 @@ function DAWApp() {
       const partial = await loadProjectFromFile(file);
       dispatch({ type: 'LOAD_PROJECT', payload: partial });
       setSaveStatus('unsaved');
+      setProjectLoadStatus('loaded');
+      setProjectLoadError(null);
+      window.setTimeout(() => {
+        setProjectLoadStatus(current => (current === 'loaded' ? 'idle' : current));
+      }, 2400);
     } catch (err) {
       console.error('riff: failed to open project file', err);
+      setProjectLoadStatus('error');
+      setProjectLoadError(err instanceof Error ? err.message : 'Failed to open project file.');
     }
   }, [dispatch]);
 
@@ -430,6 +451,12 @@ function DAWApp() {
               <Badge color={statusColor} variant="light">
                 {saveLabel}
               </Badge>
+              {projectLoadStatus === 'loading' && (
+                <Badge color="blue" variant="light">Loading project…</Badge>
+              )}
+              {projectLoadStatus === 'loaded' && (
+                <Badge color="teal" variant="light">Project loaded</Badge>
+              )}
             </Group>
           </Group>
 
@@ -461,6 +488,7 @@ function DAWApp() {
               { id: 'mixer' as const, label: 'Mixer' },
               { id: 'video' as const, label: 'Video' },
               { id: 'settings' as const, label: 'Settings' },
+              { id: 'perf' as const, label: 'Perf' },
             ] as const).map((panel) => (
               <Button
                 key={panel.id}
@@ -475,6 +503,36 @@ function DAWApp() {
           </Group>
         </Group>
       </Paper>
+
+      {projectLoadError && (
+        <Paper
+          className="app-inline-error"
+          radius={0}
+          withBorder
+          px="md"
+          py={6}
+          style={{
+            borderLeft: 0,
+            borderRight: 0,
+            borderTop: 0,
+            borderColor: '#48252b',
+            background: 'rgba(95, 29, 39, 0.72)',
+          }}
+        >
+          <Group justify="space-between" wrap="nowrap" gap="sm">
+            <Text size="sm" c="red.1">
+              Project load error: {projectLoadError}
+            </Text>
+            <CloseButton
+              aria-label="Dismiss project load error"
+              onClick={() => {
+                setProjectLoadError(null);
+                setProjectLoadStatus('idle');
+              }}
+            />
+          </Group>
+        </Paper>
+      )}
 
       <Transport />
 
@@ -517,6 +575,7 @@ function DAWApp() {
                 { id: 'mixer' as const, label: 'Mixer' },
                 { id: 'video' as const, label: 'Video Editor' },
                 { id: 'settings' as const, label: 'Project Settings' },
+                { id: 'perf' as const, label: 'Performance' },
               ] as const).map((tab) => (
                 <Button
                   key={tab.id}
@@ -540,6 +599,7 @@ function DAWApp() {
             {activePanel === 'mixer' && <Mixer />}
             {activePanel === 'video' && <VideoEditor />}
             {activePanel === 'settings' && <ProjectSettingsPanel />}
+            {activePanel === 'perf' && <PerformanceDiagnosticsPanel />}
           </Box>
         </Paper>
       )}
